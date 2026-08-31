@@ -1,13 +1,13 @@
-import { Decimal, roundCurrency, toDecimal } from '../money/decimal.js';
-import { formatMinutesToHoursAndMinutes } from '../time/rounding.js';
-import type { CalculatedWorkSession } from '../types/time.js';
+import { Decimal, roundCurrency, toDecimal } from '../money/decimal';
+import { formatMinutesToHoursAndMinutes } from '../time/rounding';
+import type { CalculatedWorkSession } from '../types/time';
 import type {
   PayrollProfile,
   GrossPayrollBreakdown,
   NetPayrollBreakdown,
   PremiumLineItem,
   DeductionLineItem,
-} from '../types/payroll.js';
+} from '../types/payroll';
 
 export interface CalculationOptions {
   etExchangeAmount?: number; // Weekly ET accommodation exchange amount if applicable

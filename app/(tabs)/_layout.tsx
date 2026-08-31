@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { LayoutDashboard, Clock, Calendar, FileText, Wallet } from 'lucide-react-native';
+import { LayoutDashboard, Clock, Calendar, FileText, Wallet, Settings } from 'lucide-react-native';
 import { colors } from '../../src/theme/colors';
 import { Platform } from 'react-native';
 
@@ -20,7 +20,7 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: '700',
           marginTop: 2,
         },
@@ -30,35 +30,42 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => <LayoutDashboard size={22} color={color} />,
+          tabBarIcon: ({ color }) => <LayoutDashboard size={20} color={color} />,
         }}
       />
       <Tabs.Screen
         name="work"
         options={{
           title: 'Track Work',
-          tabBarIcon: ({ color, size }) => <Clock size={22} color={color} />,
+          tabBarIcon: ({ color }) => <Clock size={20} color={color} />,
         }}
       />
       <Tabs.Screen
         name="shifts"
         options={{
           title: 'Shifts',
-          tabBarIcon: ({ color, size }) => <Calendar size={22} color={color} />,
+          tabBarIcon: ({ color }) => <Calendar size={20} color={color} />,
         }}
       />
       <Tabs.Screen
         name="payslips"
         options={{
           title: 'Payslips',
-          tabBarIcon: ({ color, size }) => <FileText size={22} color={color} />,
+          tabBarIcon: ({ color }) => <FileText size={20} color={color} />,
         }}
       />
       <Tabs.Screen
         name="finance"
         options={{
           title: 'Finance',
-          tabBarIcon: ({ color, size }) => <Wallet size={22} color={color} />,
+          tabBarIcon: ({ color }) => <Wallet size={20} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color }) => <Settings size={20} color={color} />,
         }}
       />
     </Tabs>

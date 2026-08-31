@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { calculateGrossPayroll, calculateNetPayroll } from '../../shared/payroll/engine.js';
-import { CARRIERE_AH_PROFILE_2026, CARRIERE_AH_PROFILE_WEEK13_2026 } from '../../shared/payroll/profiles.js';
-import type { CalculatedWorkSession } from '../../shared/types/time.js';
+import { calculateGrossPayroll, calculateNetPayroll } from '../../shared/payroll/engine';
+import { CARRIERE_AH_PROFILE_2026, CARRIERE_AH_PROFILE_WEEK13_2026 } from '../../shared/payroll/profiles';
+import type { CalculatedWorkSession } from '../../shared/types/time';
 
 describe('Deterministic Payroll Engine — Reference Payslip Tests', () => {
   it('accurately reproduces Week 33 reference payslip figures', () => {

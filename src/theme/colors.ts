@@ -26,6 +26,8 @@ export const colors = {
   blueBg: 'rgba(56, 189, 248, 0.12)',
   indigo: '#818CF8',
   indigoBg: 'rgba(129, 140, 248, 0.12)',
+  purple: '#C084FC',
+  purpleBg: 'rgba(192, 132, 252, 0.12)',
   amber: '#FBBF24',
   amberBg: 'rgba(251, 191, 36, 0.12)',
   danger: '#F43F5E',

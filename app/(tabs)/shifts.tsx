@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -12,235 +12,188 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
-  KeyboardAvoidingView,
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
   ChevronRight,
-  Calendar as CalendarIcon,
   Plus,
   Trash2,
+  X,
+  Copy,
+  Sliders,
   Sun,
   Sunset,
   Moon,
   Coffee,
-  X,
-  Clock,
-  Copy,
-  Layers,
-  Sparkles,
   CheckCircle2,
 } from 'lucide-react-native';
-import { api } from '../../src/services/api';
+import { shiftRepository } from '../../src/database';
 import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
-const SHIFT_TYPES = [
-  { type: 'MORNING', label: 'Morning', icon: Sun, color: colors.amber, defaultStart: '06:00', defaultEnd: '15:00' },
-  { type: 'AFTERNOON', label: 'Afternoon', icon: Sunset, color: colors.blue, defaultStart: '14:30', defaultEnd: '23:00' },
-  { type: 'NIGHT', label: 'Night', icon: Moon, color: colors.indigo, defaultStart: '22:30', defaultEnd: '07:00' },
-  { type: 'OFF', label: 'Day Off', icon: Coffee, color: colors.primary, defaultStart: '', defaultEnd: '' },
-  { type: 'CUSTOM', label: 'Custom', icon: Clock, color: '#A855F7', defaultStart: '08:00', defaultEnd: '16:30' },
+const SHIFT_PRESETS = [
+  { label: 'Morning', type: 'MORNING', start: '06:00', end: '14:30', isOff: false, icon: Sun, color: colors.amber },
+  { label: 'Afternoon', type: 'AFTERNOON', start: '14:30', end: '23:00', isOff: false, icon: Sunset, color: colors.indigo },
+  { label: 'Night', type: 'NIGHT', start: '22:30', end: '06:00', isOff: false, icon: Moon, color: colors.purple },
+  { label: 'OFF', type: 'OFF', start: '', end: '', isOff: true, icon: Coffee, color: colors.textTertiary },
 ];
-
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function ShiftsScreen() {
   const queryClient = useQueryClient();
 
-  // Current calendar view month/year
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().substring(0, 10));
 
-  // Single Day Edit Modal
-  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  // Modals
   const [dayModalVisible, setDayModalVisible] = useState(false);
-  const [dayShiftType, setDayShiftType] = useState('AFTERNOON');
-  const [dayStartTime, setDayStartTime] = useState('14:30');
-  const [dayEndTime, setDayEndTime] = useState('23:00');
-  const [dayNotes, setDayNotes] = useState('');
-  const [activeShiftId, setActiveShiftId] = useState<string | null>(null);
+  const [bulkModalVisible, setBulkModalVisible] = useState(false);
 
-  // Weekly Bulk Modal
-  const [weekModalVisible, setWeekModalVisible] = useState(false);
-  const [weekStartMonday, setWeekStartMonday] = useState<Date>(() => {
+  // Day Edit State
+  const [editShiftId, setEditShiftId] = useState<string | null>(null);
+  const [editType, setEditType] = useState('AFTERNOON');
+  const [editStart, setEditStart] = useState('14:30');
+  const [editEnd, setEditEnd] = useState('23:00');
+  const [editIsOff, setEditIsOff] = useState(false);
+  const [editNotes, setEditNotes] = useState('');
+
+  // Bulk Week State (Monday to Sunday)
+  const [bulkWeekStart, setBulkWeekStart] = useState(() => {
     const d = new Date();
     const day = d.getDay() || 7;
     d.setDate(d.getDate() - day + 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return d.toISOString().substring(0, 10);
   });
+  const [bulkShifts, setBulkShifts] = useState<Array<{ type: string; isOff: boolean }>>([
+    { type: 'AFTERNOON', isOff: false }, // Mon
+    { type: 'AFTERNOON', isOff: false }, // Tue
+    { type: 'AFTERNOON', isOff: false }, // Wed
+    { type: 'AFTERNOON', isOff: false }, // Thu
+    { type: 'AFTERNOON', isOff: false }, // Fri
+    { type: 'OFF', isOff: true },        // Sat
+    { type: 'OFF', isOff: true },        // Sun
+  ]);
 
-  const [weeklyShiftsDraft, setWeeklyShiftsDraft] = useState<
-    Array<{
-      date: Date;
-      shiftType: string;
-      startTime: string;
-      endTime: string;
-      isDayOff: boolean;
-      notes: string;
-    }>
-  >([]);
+  // Query month range
+  const year = currentMonthDate.getFullYear();
+  const month = currentMonthDate.getMonth();
+  const firstDay = new Date(Date.UTC(year, month, 1));
+  const lastDay = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
 
-  // Fetch shifts for current month +/- 1 month
-  const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-  const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 2, 0);
-
-  const { data: shiftsData, isLoading } = useQuery({
-    queryKey: ['shifts', currentDate.getFullYear(), currentDate.getMonth()],
+  const { data: shifts, isLoading, refetch } = useQuery({
+    queryKey: ['localShifts', year, month],
     queryFn: () =>
-      api.listShifts({
-        startDate: monthStart.toISOString(),
-        endDate: monthEnd.toISOString(),
+      shiftRepository.listShifts({
+        startDate: firstDay,
+        endDate: lastDay,
       }),
   });
 
-  const shifts = shiftsData?.shifts || [];
-
-  // Index shifts by YYYY-MM-DD
-  const shiftsByDate = useMemo(() => {
-    const map = new Map<string, any>();
-    for (const s of shifts) {
-      const dStr = new Date(s.date).toISOString().substring(0, 10);
-      map.set(dStr, s);
-    }
-    return map;
-  }, [shifts]);
-
   // Mutations
-  const createOrUpdateShiftMutation = useMutation({
-    mutationFn: async (payload: any) => {
-      if (activeShiftId) {
-        return api.updateShift(activeShiftId, payload);
-      }
-      return api.createShift(payload);
-    },
+  const saveShiftMutation = useMutation({
+    mutationFn: (payload: any) => shiftRepository.saveShift(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shifts'] });
+      queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setDayModalVisible(false);
+      Alert.alert('Shift Saved', 'Shift schedule updated.');
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
   const deleteShiftMutation = useMutation({
-    mutationFn: (id: string) => api.deleteShift(id),
+    mutationFn: (id: string) => shiftRepository.deleteShift(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shifts'] });
+      queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setDayModalVisible(false);
+      Alert.alert('Shift Removed', 'Shift removed from calendar.');
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
-  const bulkSaveWeekMutation = useMutation({
-    mutationFn: (payload: { weekStartDate: Date; shifts: any[] }) =>
-      api.bulkSaveWeek(payload),
+  const bulkSaveMutation = useMutation({
+    mutationFn: (payload: any) => shiftRepository.bulkSaveWeek(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shifts'] });
-      setWeekModalVisible(false);
-      Alert.alert('Week Scheduled', '7-day weekly schedule saved successfully.');
+      queryClient.invalidateQueries({ queryKey: ['localShifts'] });
+      setBulkModalVisible(false);
+      Alert.alert('Week Configured', '7-day shift roster saved atomically.');
     },
     onError: (err: any) => Alert.alert('Bulk Save Error', err.message),
   });
 
   const copyPreviousWeekMutation = useMutation({
-    mutationFn: (targetWeekStartDate: Date) =>
-      api.copyPreviousWeek({ targetWeekStartDate }),
+    mutationFn: (targetWeekStartDate: string) =>
+      shiftRepository.copyPreviousWeek({ targetWeekStartDate }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shifts'] });
-      setWeekModalVisible(false);
-      Alert.alert('Success', 'Previous week shifts copied successfully.');
+      queryClient.invalidateQueries({ queryKey: ['localShifts'] });
+      setBulkModalVisible(false);
+      Alert.alert('Copied Successfully', 'Copied previous week roster.');
     },
     onError: (err: any) => Alert.alert('Copy Error', err.message),
   });
 
-  // Calendar Navigation
+  // Month navigation
   const prevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+    setCurrentMonthDate(new Date(year, month - 1, 1));
   };
   const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+    setCurrentMonthDate(new Date(year, month + 1, 1));
   };
 
-  const monthName = currentDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  // Calendar Grid Generation (Mon to Sun)
+  const monthName = currentMonthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Mon=0, Sun=6
+  const totalDays = lastDay.getDate();
 
-  // Generate 6x7 Calendar Grid
-  const calendarCells = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
+  const calendarCells = [];
+  for (let i = 0; i < startDayOfWeek; i++) {
+    calendarCells.push(null);
+  }
+  for (let day = 1; day <= totalDays; day++) {
+    const d = new Date(Date.UTC(year, month, day));
+    calendarCells.push(d.toISOString().substring(0, 10));
+  }
 
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
+  const todayStr = new Date().toISOString().substring(0, 10);
 
-    // Day of week 1(Mon)..7(Sun)
-    let startDayOfWeek = firstDay.getDay() || 7;
-
-    const cells: Array<{ date: Date; isCurrentMonth: boolean; key: string }> = [];
-
-    // Preceding month trailing days
-    const prevLastDay = new Date(year, month, 0).getDate();
-    for (let i = startDayOfWeek - 1; i > 0; i--) {
-      const d = new Date(year, month - 1, prevLastDay - i + 1);
-      cells.push({ date: d, isCurrentMonth: false, key: `prev-${d.toISOString()}` });
-    }
-
-    // Current month days
-    for (let day = 1; day <= lastDay.getDate(); day++) {
-      const d = new Date(year, month, day);
-      cells.push({ date: d, isCurrentMonth: true, key: `curr-${day}` });
-    }
-
-    // Following month leading days to complete grid
-    const remaining = (7 - (cells.length % 7)) % 7;
-    for (let i = 1; i <= remaining; i++) {
-      const d = new Date(year, month + 1, i);
-      cells.push({ date: d, isCurrentMonth: false, key: `next-${i}` });
-    }
-
-    return cells;
-  }, [currentDate]);
-
-  // Open Single Day Modal
-  const handleDayPress = (date: Date) => {
-    setSelectedDay(date);
-    const dStr = date.toISOString().substring(0, 10);
-    const existing = shiftsByDate.get(dStr);
+  // Open Day Edit Modal
+  const handleSelectDay = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    const existing = shifts?.find((s: any) => s.date.substring(0, 10) === dateStr);
 
     if (existing) {
-      setActiveShiftId(existing.id);
-      setDayShiftType(existing.shiftType);
-      setDayStartTime(
-        existing.plannedStart ? formatTimeHHMM(existing.plannedStart) : '14:30'
-      );
-      setDayEndTime(
-        existing.plannedEnd ? formatTimeHHMM(existing.plannedEnd) : '23:00'
-      );
-      setDayNotes(existing.notes || '');
+      setEditShiftId(existing.id);
+      setEditType(existing.shiftType);
+      setEditIsOff(Boolean(existing.isDayOff));
+      setEditStart(existing.plannedStart ? formatTimeHHMM(existing.plannedStart) : '14:30');
+      setEditEnd(existing.plannedEnd ? formatTimeHHMM(existing.plannedEnd) : '23:00');
+      setEditNotes(existing.notes || '');
     } else {
-      setActiveShiftId(null);
-      setDayShiftType('AFTERNOON');
-      setDayStartTime('14:30');
-      setDayEndTime('23:00');
-      setDayNotes('');
+      setEditShiftId(null);
+      setEditType('AFTERNOON');
+      setEditIsOff(false);
+      setEditStart('14:30');
+      setEditEnd('23:00');
+      setEditNotes('');
     }
 
     setDayModalVisible(true);
   };
 
-  const handleSaveDayShift = () => {
-    if (!selectedDay) return;
-    const isDayOff = dayShiftType === 'OFF';
+  // Save Day Shift
+  const handleSaveDay = () => {
+    const baseDate = new Date(selectedDate);
 
-    let plannedStart: Date | undefined;
-    let plannedEnd: Date | undefined;
+    let plannedStart: Date | null = null;
+    let plannedEnd: Date | null = null;
 
-    if (!isDayOff) {
-      const [sh, sm] = dayStartTime.split(':').map(Number);
-      const [eh, em] = dayEndTime.split(':').map(Number);
+    if (!editIsOff && editType !== 'OFF') {
+      const [sh, sm] = editStart.split(':').map(Number);
+      const [eh, em] = editEnd.split(':').map(Number);
 
-      plannedStart = new Date(selectedDay);
+      plannedStart = new Date(baseDate);
       plannedStart.setHours(sh || 14, sm || 30, 0, 0);
 
-      plannedEnd = new Date(selectedDay);
+      plannedEnd = new Date(baseDate);
       plannedEnd.setHours(eh || 23, em || 0, 0, 0);
 
       if (eh < sh) {
@@ -248,121 +201,58 @@ export default function ShiftsScreen() {
       }
     }
 
-    createOrUpdateShiftMutation.mutate({
-      date: selectedDay,
-      shiftType: dayShiftType,
+    saveShiftMutation.mutate({
+      id: editShiftId || undefined,
+      date: baseDate,
+      shiftType: editType,
       plannedStart,
       plannedEnd,
-      isDayOff,
-      notes: dayNotes || undefined,
+      isDayOff: editIsOff || editType === 'OFF',
+      notes: editNotes || undefined,
     });
   };
 
-  // Open Weekly Bulk Editor
-  const handleOpenWeekModal = () => {
-    // Generate draft for 7 days starting from weekStartMonday
-    const draft = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStartMonday);
-      d.setDate(weekStartMonday.getDate() + i);
-      const dStr = d.toISOString().substring(0, 10);
-      const existing = shiftsByDate.get(dStr);
+  // Save Bulk Week
+  const handleSaveBulkWeek = () => {
+    const monday = new Date(bulkWeekStart);
+    monday.setHours(0, 0, 0, 0);
 
-      if (existing) {
-        draft.push({
-          date: d,
-          shiftType: existing.shiftType,
-          startTime: existing.plannedStart ? formatTimeHHMM(existing.plannedStart) : '14:30',
-          endTime: existing.plannedEnd ? formatTimeHHMM(existing.plannedEnd) : '23:00',
-          isDayOff: existing.isDayOff,
-          notes: existing.notes || '',
-        });
-      } else {
-        // Default weekday template (Mon-Fri Afternoon, Sat-Sun OFF)
-        const isWeekend = i >= 5;
-        draft.push({
-          date: d,
-          shiftType: isWeekend ? 'OFF' : 'AFTERNOON',
-          startTime: isWeekend ? '' : '14:30',
-          endTime: isWeekend ? '' : '23:00',
-          isDayOff: isWeekend,
-          notes: '',
-        });
-      }
-    }
+    const weekShiftsPayload = bulkShifts.map((item, idx) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + idx);
 
-    setWeeklyShiftsDraft(draft);
-    setWeekModalVisible(true);
-  };
+      let plannedStart: Date | null = null;
+      let plannedEnd: Date | null = null;
 
-  const handleApplyToAllWeekdays = (sourceIndex: number) => {
-    const template = weeklyShiftsDraft[sourceIndex];
-    setWeeklyShiftsDraft((prev) =>
-      prev.map((item, idx) => {
-        if (idx < 5) {
-          return {
-            ...item,
-            shiftType: template.shiftType,
-            startTime: template.startTime,
-            endTime: template.endTime,
-            isDayOff: template.isDayOff,
-          };
-        }
-        return item;
-      })
-    );
-  };
+      if (!item.isOff && item.type !== 'OFF') {
+        const preset = SHIFT_PRESETS.find((p) => p.type === item.type) || SHIFT_PRESETS[1];
+        const [sh, sm] = preset.start.split(':').map(Number);
+        const [eh, em] = preset.end.split(':').map(Number);
 
-  const handleClearWeek = () => {
-    setWeeklyShiftsDraft((prev) =>
-      prev.map((item) => ({
-        ...item,
-        shiftType: 'OFF',
-        startTime: '',
-        endTime: '',
-        isDayOff: true,
-      }))
-    );
-  };
+        plannedStart = new Date(d);
+        plannedStart.setHours(sh, sm, 0, 0);
 
-  const handleSaveWeek = () => {
-    const formattedShifts = weeklyShiftsDraft.map((item) => {
-      const isDayOff = item.shiftType === 'OFF' || item.isDayOff;
-      let plannedStart: Date | undefined;
-      let plannedEnd: Date | undefined;
-
-      if (!isDayOff && item.startTime && item.endTime) {
-        const [sh, sm] = item.startTime.split(':').map(Number);
-        const [eh, em] = item.endTime.split(':').map(Number);
-
-        plannedStart = new Date(item.date);
-        plannedStart.setHours(sh || 14, sm || 30, 0, 0);
-
-        plannedEnd = new Date(item.date);
-        plannedEnd.setHours(eh || 23, em || 0, 0, 0);
-
-        if (eh < sh) {
-          plannedEnd.setDate(plannedEnd.getDate() + 1);
-        }
+        plannedEnd = new Date(d);
+        plannedEnd.setHours(eh, em, 0, 0);
+        if (eh < sh) plannedEnd.setDate(plannedEnd.getDate() + 1);
       }
 
       return {
-        date: item.date,
-        shiftType: item.shiftType,
+        date: d,
+        shiftType: item.type,
         plannedStart,
         plannedEnd,
-        isDayOff,
-        notes: item.notes || undefined,
+        isDayOff: item.isOff || item.type === 'OFF',
       };
     });
 
-    bulkSaveWeekMutation.mutate({
-      weekStartDate: weekStartMonday,
-      shifts: formattedShifts,
+    bulkSaveMutation.mutate({
+      weekStartDate: monday,
+      shifts: weekShiftsPayload,
     });
   };
 
-  const todayStr = new Date().toISOString().substring(0, 10);
+  const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -371,141 +261,137 @@ export default function ShiftsScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerSubtitle}>Roster & Auto-Start</Text>
-            <Text style={styles.headerTitle}>Shifts Calendar</Text>
+            <Text style={styles.headerSubtitle}>Albert Heijn Bleiswijk</Text>
+            <Text style={styles.headerTitle}>Shift Roster</Text>
           </View>
+
           <TouchableOpacity
-            onPress={handleOpenWeekModal}
+            onPress={() => setBulkModalVisible(true)}
             activeOpacity={0.8}
-            style={styles.setWeekButton}
+            style={styles.bulkButton}
           >
-            <Layers size={16} color={colors.textInverse} />
-            <Text style={styles.setWeekButtonText}>Set Week</Text>
+            <Sliders size={15} color={colors.primaryLight} />
+            <Text style={styles.bulkButtonText}>Set Week</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Month Switcher Bar */}
-        <View style={styles.monthBar}>
-          <TouchableOpacity onPress={prevMonth} activeOpacity={0.7} style={styles.monthNavButton}>
+        {/* Month Navigation Card */}
+        <View style={styles.monthNavCard}>
+          <TouchableOpacity onPress={prevMonth} style={styles.navArrowButton}>
             <ChevronLeft size={20} color={colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.monthTitleText}>{monthName}</Text>
-          <TouchableOpacity onPress={nextMonth} activeOpacity={0.7} style={styles.monthNavButton}>
+          <TouchableOpacity onPress={nextMonth} style={styles.navArrowButton}>
             <ChevronRight size={20} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
 
-        {/* Weekday Column Headers */}
-        <View style={styles.weekdayHeaderRow}>
-          {WEEKDAYS.map((day, idx) => (
-            <View key={day} style={styles.weekdayCol}>
-              <Text
-                style={[
-                  styles.weekdayHeaderText,
-                  idx >= 5 && { color: colors.textTertiary },
-                ]}
-              >
-                {day}
-              </Text>
-            </View>
-          ))}
-        </View>
-
         {/* 7-Column Calendar Grid */}
-        <View style={styles.calendarGrid}>
-          {calendarCells.map((cell) => {
-            const cellDateStr = cell.date.toISOString().substring(0, 10);
-            const shift = shiftsByDate.get(cellDateStr);
-            const isToday = cellDateStr === todayStr;
-
-            let shiftConfig = null;
-            if (shift) {
-              shiftConfig =
-                SHIFT_TYPES.find((t) => t.type === shift.shiftType) || SHIFT_TYPES[4];
-            }
-
-            return (
-              <TouchableOpacity
-                key={cell.key}
-                onPress={() => handleDayPress(cell.date)}
-                activeOpacity={0.75}
-                style={[
-                  styles.calendarCell,
-                  !cell.isCurrentMonth && styles.calendarCellMuted,
-                  isToday && styles.calendarCellToday,
-                ]}
-              >
-                {/* Day Number */}
-                <View style={styles.cellDayHeader}>
-                  <Text
-                    style={[
-                      styles.cellDayNumber,
-                      !cell.isCurrentMonth && styles.cellDayNumberMuted,
-                      isToday && styles.cellDayNumberToday,
-                    ]}
-                  >
-                    {cell.date.getDate()}
-                  </Text>
-                  {isToday && <View style={styles.todayIndicatorDot} />}
-                </View>
-
-                {/* Shift Indicator Chip */}
-                {shift && shiftConfig && (
-                  <View
-                    style={[
-                      styles.cellShiftBadge,
-                      {
-                        backgroundColor: `${shiftConfig.color}25`,
-                        borderColor: `${shiftConfig.color}60`,
-                      },
-                    ]}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.cellShiftText, { color: shiftConfig.color }]}
-                    >
-                      {shift.shiftType === 'OFF'
-                        ? 'OFF'
-                        : shift.plannedStart
-                        ? formatTimeHHMM(shift.plannedStart)
-                        : shiftConfig.label}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Legend */}
-        <View style={styles.legendContainer}>
-          <Text style={styles.legendTitle}>SHIFT CODES</Text>
-          <View style={styles.legendGrid}>
-            {SHIFT_TYPES.map((t) => (
-              <View key={t.type} style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: t.color }]} />
-                <Text style={styles.legendLabel}>
-                  {t.label} {t.defaultStart ? `(${t.defaultStart})` : ''}
+        <View style={styles.calendarContainer}>
+          {/* Day Names Row */}
+          <View style={styles.dayNamesRow}>
+            {DAYS_OF_WEEK.map((dayName, idx) => (
+              <View key={idx} style={styles.dayNameCell}>
+                <Text
+                  style={[
+                    styles.dayNameText,
+                    (idx === 5 || idx === 6) && { color: colors.textTertiary },
+                  ]}
+                >
+                  {dayName}
                 </Text>
               </View>
             ))}
           </View>
+
+          {/* Calendar Grid Cells */}
+          <View style={styles.gridCellsContainer}>
+            {calendarCells.map((dateStr, idx) => {
+              if (!dateStr) {
+                return <View key={`empty_${idx}`} style={styles.cellEmpty} />;
+              }
+
+              const dayNum = parseInt(dateStr.split('-')[2], 10);
+              const isToday = dateStr === todayStr;
+              const shift = shifts?.find((s: any) => s.date.substring(0, 10) === dateStr);
+
+              let pillBg = colors.cardElevated;
+              let pillText = colors.textTertiary;
+
+              if (shift) {
+                if (shift.isDayOff || shift.shiftType === 'OFF') {
+                  pillBg = colors.backgroundSecondary;
+                  pillText = colors.textTertiary;
+                } else if (shift.shiftType === 'MORNING') {
+                  pillBg = colors.amberBg;
+                  pillText = colors.amber;
+                } else if (shift.shiftType === 'AFTERNOON') {
+                  pillBg = colors.indigoBg;
+                  pillText = colors.indigo;
+                } else if (shift.shiftType === 'NIGHT') {
+                  pillBg = colors.purpleBg;
+                  pillText = colors.purple;
+                }
+              }
+
+              return (
+                <TouchableOpacity
+                  key={dateStr}
+                  onPress={() => handleSelectDay(dateStr)}
+                  activeOpacity={0.7}
+                  style={[styles.calendarCell, isToday && styles.calendarCellToday]}
+                >
+                  <Text style={[styles.dayNumText, isToday && styles.dayNumTextToday]}>
+                    {dayNum}
+                  </Text>
+
+                  {shift && (
+                    <View style={[styles.shiftPill, { backgroundColor: pillBg }]}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.shiftPillText, { color: pillText }]}
+                      >
+                        {shift.shiftType === 'AFTERNOON'
+                          ? 'AFT'
+                          : shift.shiftType === 'MORNING'
+                          ? 'MORN'
+                          : shift.shiftType === 'NIGHT'
+                          ? 'NIGHT'
+                          : 'OFF'}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Legend */}
+        <View style={styles.legendContainer}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.amber }]} />
+            <Text style={styles.legendText}>Morning (06:00)</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.indigo }]} />
+            <Text style={styles.legendText}>Afternoon (14:30)</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.purple }]} />
+            <Text style={styles.legendText}>Night (22:30)</Text>
+          </View>
         </View>
       </ScrollView>
 
-      {/* 1. Single Day Shift Modal */}
+      {/* 1. Edit Day Shift Modal */}
       <Modal visible={dayModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
+        <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>
-                  {selectedDay ? formatDateShort(selectedDay) : 'Schedule Shift'}
-                </Text>
-                <Text style={styles.modalSubtitle}>Configure Daily Work Shift</Text>
+                <Text style={styles.modalTitle}>Set Shift for Day</Text>
+                <Text style={styles.modalSubtitle}>{formatDateShort(selectedDate)}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setDayModalVisible(false)}
@@ -515,59 +401,60 @@ export default function ShiftsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Shift Type Pills */}
-            <Text style={styles.inputLabel}>SHIFT TYPE</Text>
-            <View style={styles.shiftTypeSelector}>
-              {SHIFT_TYPES.map((t) => {
-                const isSelected = dayShiftType === t.type;
+            {/* Shift Preset Toggles */}
+            <Text style={styles.inputLabel}>SELECT SHIFT TYPE</Text>
+            <View style={styles.presetsGrid}>
+              {SHIFT_PRESETS.map((preset) => {
+                const IconComp = preset.icon;
+                const isSelected = editType === preset.type;
                 return (
                   <TouchableOpacity
-                    key={t.type}
+                    key={preset.type}
                     onPress={() => {
-                      setDayShiftType(t.type);
-                      if (t.defaultStart) setDayStartTime(t.defaultStart);
-                      if (t.defaultEnd) setDayEndTime(t.defaultEnd);
+                      setEditType(preset.type);
+                      setEditIsOff(preset.isOff);
+                      if (!preset.isOff) {
+                        setEditStart(preset.start);
+                        setEditEnd(preset.end);
+                      }
                     }}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.typeOption,
-                      isSelected && {
-                        borderColor: t.color,
-                        backgroundColor: `${t.color}25`,
-                      },
-                    ]}
+                    style={[styles.presetCard, isSelected && styles.presetCardSelected]}
                   >
-                    <t.icon size={15} color={isSelected ? t.color : colors.textTertiary} />
+                    <IconComp
+                      size={18}
+                      color={isSelected ? preset.color : colors.textTertiary}
+                    />
                     <Text
-                      style={[
-                        styles.typeOptionText,
-                        isSelected && { color: t.color, fontWeight: '800' },
-                      ]}
+                      style={[styles.presetCardText, isSelected && { color: colors.textPrimary }]}
                     >
-                      {t.label}
+                      {preset.label}
                     </Text>
+                    {preset.start ? (
+                      <Text style={styles.presetTimeText}>{preset.start}</Text>
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
             </View>
 
-            {dayShiftType !== 'OFF' && (
+            {/* Custom Hours (if not Day OFF) */}
+            {!editIsOff && editType !== 'OFF' && (
               <View style={styles.timeInputsRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>START TIME (HH:MM)</Text>
+                  <Text style={styles.inputLabel}>START (HH:MM)</Text>
                   <TextInput
-                    value={dayStartTime}
-                    onChangeText={setDayStartTime}
+                    value={editStart}
+                    onChangeText={setEditStart}
                     placeholder="14:30"
                     placeholderTextColor={colors.textTertiary}
                     style={styles.textInput}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>END TIME (HH:MM)</Text>
+                  <Text style={styles.inputLabel}>FINISH (HH:MM)</Text>
                   <TextInput
-                    value={dayEndTime}
-                    onChangeText={setDayEndTime}
+                    value={editEnd}
+                    onChangeText={setEditEnd}
                     placeholder="23:00"
                     placeholderTextColor={colors.textTertiary}
                     style={styles.textInput}
@@ -576,158 +463,133 @@ export default function ShiftsScreen() {
               </View>
             )}
 
-            <Text style={styles.inputLabel}>NOTES / DEPARTMENT (OPTIONAL)</Text>
-            <TextInput
-              value={dayNotes}
-              onChangeText={setDayNotes}
-              placeholder="Bleiswijk Order Picking / Staging"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
-
-            <View style={styles.dayModalActionsRow}>
-              {activeShiftId && (
+            {/* Action Buttons */}
+            <View style={styles.modalActionsRow}>
+              {editShiftId && (
                 <TouchableOpacity
-                  onPress={() => deleteShiftMutation.mutate(activeShiftId)}
+                  onPress={() => deleteShiftMutation.mutate(editShiftId)}
                   disabled={deleteShiftMutation.isPending}
-                  style={styles.deleteShiftButton}
+                  style={styles.deleteButton}
                 >
                   <Trash2 size={18} color={colors.danger} />
                 </TouchableOpacity>
               )}
               <TouchableOpacity
-                onPress={handleSaveDayShift}
-                disabled={createOrUpdateShiftMutation.isPending}
+                onPress={handleSaveDay}
+                disabled={saveShiftMutation.isPending}
                 activeOpacity={0.85}
-                style={[styles.saveShiftButton, { flex: 1 }]}
+                style={[styles.saveButton, { flex: 1 }]}
               >
-                {createOrUpdateShiftMutation.isPending ? (
+                {saveShiftMutation.isPending ? (
                   <ActivityIndicator color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.saveShiftButtonText}>Save Shift</Text>
+                  <Text style={styles.saveButtonText}>Save Shift</Text>
                 )}
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
-      {/* 2. Set Entire Week Bulk Modal */}
-      <Modal visible={weekModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
-          <View style={[styles.modalSheet, { maxHeight: '90%' }]}>
+      {/* 2. Bulk Week Shift Editor Modal */}
+      <Modal visible={bulkModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Set Weekly Schedule</Text>
+                <Text style={styles.modalTitle}>Set 7-Day Shift Week</Text>
                 <Text style={styles.modalSubtitle}>
-                  Week starting Monday, {formatDateShort(weekStartMonday)}
+                  Week of {formatDateShort(bulkWeekStart)}
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => setWeekModalVisible(false)}
+                onPress={() => setBulkModalVisible(false)}
                 style={styles.closeButton}
               >
                 <X size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            {/* Quick Actions Toolbar */}
-            <View style={styles.weekToolbar}>
+            {/* Quick Actions */}
+            <View style={styles.bulkQuickActionsRow}>
               <TouchableOpacity
-                onPress={() => copyPreviousWeekMutation.mutate(weekStartMonday)}
+                onPress={() => copyPreviousWeekMutation.mutate(bulkWeekStart)}
                 disabled={copyPreviousWeekMutation.isPending}
-                style={styles.weekToolbarButton}
+                style={styles.copyPrevButton}
               >
                 <Copy size={14} color={colors.primaryLight} />
-                <Text style={styles.weekToolbarText}>Copy Prev Week</Text>
+                <Text style={styles.copyPrevButtonText}>Copy Previous Week</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => handleApplyToAllWeekdays(0)}
-                style={styles.weekToolbarButton}
+                onPress={() =>
+                  setBulkShifts([
+                    { type: 'AFTERNOON', isOff: false },
+                    { type: 'AFTERNOON', isOff: false },
+                    { type: 'AFTERNOON', isOff: false },
+                    { type: 'AFTERNOON', isOff: false },
+                    { type: 'AFTERNOON', isOff: false },
+                    { type: 'OFF', isOff: true },
+                    { type: 'OFF', isOff: true },
+                  ])
+                }
+                style={styles.monFriButton}
               >
-                <Sparkles size={14} color={colors.blue} />
-                <Text style={styles.weekToolbarText}>Copy Mon $\rightarrow$ Fri</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={handleClearWeek} style={styles.weekToolbarButton}>
-                <Trash2 size={14} color={colors.danger} />
-                <Text style={[styles.weekToolbarText, { color: colors.danger }]}>Clear</Text>
+                <Text style={styles.monFriButtonText}>Mon–Fri Afternoon</Text>
               </TouchableOpacity>
             </View>
 
-            {/* 7 Days List Editor */}
-            <ScrollView style={{ marginVertical: 10 }}>
-              {weeklyShiftsDraft.map((item, idx) => (
-                <View key={idx} style={styles.weekDayRow}>
-                  <View style={styles.weekDayLabelCol}>
-                    <Text style={styles.weekDayName}>{WEEKDAYS[idx]}</Text>
-                    <Text style={styles.weekDayDate}>{item.date.getDate()}</Text>
-                  </View>
-
-                  {/* Shift Selector Buttons */}
-                  <View style={styles.weekDayPillsRow}>
-                    {SHIFT_TYPES.map((t) => {
-                      const isSelected = item.shiftType === t.type;
-                      return (
+            {/* 7-Day Quick Selector List */}
+            <ScrollView style={{ maxHeight: 280, marginVertical: 8 }}>
+              {DAYS_OF_WEEK.map((dayName, idx) => {
+                const item = bulkShifts[idx] || { type: 'OFF', isOff: true };
+                return (
+                  <View key={dayName} style={styles.bulkDayRow}>
+                    <Text style={styles.bulkDayName}>{dayName}</Text>
+                    <View style={styles.bulkTypeButtons}>
+                      {['MORNING', 'AFTERNOON', 'NIGHT', 'OFF'].map((t) => (
                         <TouchableOpacity
-                          key={t.type}
+                          key={t}
                           onPress={() => {
-                            setWeeklyShiftsDraft((prev) =>
-                              prev.map((d, dIdx) =>
-                                dIdx === idx
-                                  ? {
-                                      ...d,
-                                      shiftType: t.type,
-                                      startTime: t.defaultStart,
-                                      endTime: t.defaultEnd,
-                                      isDayOff: t.type === 'OFF',
-                                    }
-                                  : d
-                              )
-                            );
+                            const copy = [...bulkShifts];
+                            copy[idx] = { type: t, isOff: t === 'OFF' };
+                            setBulkShifts(copy);
                           }}
                           style={[
-                            styles.weekDayPill,
-                            isSelected && {
-                              backgroundColor: `${t.color}25`,
-                              borderColor: t.color,
-                            },
+                            styles.bulkTypePill,
+                            item.type === t && styles.bulkTypePillActive,
                           ]}
                         >
                           <Text
                             style={[
-                              styles.weekDayPillText,
-                              isSelected && { color: t.color, fontWeight: '800' },
+                              styles.bulkTypePillText,
+                              item.type === t && styles.bulkTypePillTextActive,
                             ]}
                           >
-                            {t.label}
+                            {t === 'AFTERNOON' ? 'AFT' : t === 'MORNING' ? 'MORN' : t}
                           </Text>
                         </TouchableOpacity>
-                      );
-                    })}
+                      ))}
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </ScrollView>
 
             <TouchableOpacity
-              onPress={handleSaveWeek}
-              disabled={bulkSaveWeekMutation.isPending}
+              onPress={handleSaveBulkWeek}
+              disabled={bulkSaveMutation.isPending}
               activeOpacity={0.85}
-              style={styles.saveShiftButton}
+              style={styles.saveButton}
             >
-              {bulkSaveWeekMutation.isPending ? (
+              {bulkSaveMutation.isPending ? (
                 <ActivityIndicator color={colors.textInverse} />
               ) : (
-                <Text style={styles.saveShiftButtonText}>Save Full Week (Atomic)</Text>
+                <Text style={styles.saveButtonText}>Save Whole Week (Atomic)</Text>
               )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -742,7 +604,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 24 : 12,
     paddingBottom: 36,
   },
@@ -763,39 +625,41 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
-  setWeekButton: {
+  bulkButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 12,
     gap: 6,
   },
-  setWeekButtonText: {
-    color: colors.textInverse,
-    fontSize: 13,
-    fontWeight: '800',
+  bulkButtonText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
   },
 
-  // Month Switcher
-  monthBar: {
+  // Month Nav
+  monthNavCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
   },
-  monthNavButton: {
+  navArrowButton: {
     width: 36,
     height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.cardElevated,
+    borderRadius: 18,
+    backgroundColor: colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -803,106 +667,85 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
     fontWeight: '800',
-    letterSpacing: 0.2,
   },
 
-  // Weekday Header
-  weekdayHeaderRow: {
-    flexDirection: 'row',
-    marginBottom: 6,
+  // Calendar
+  calendarContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
+    marginBottom: 16,
   },
-  weekdayCol: {
+  dayNamesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+  },
+  dayNameCell: {
     flex: 1,
     alignItems: 'center',
   },
-  weekdayHeaderText: {
+  dayNameText: {
     color: colors.textSecondary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
-
-  // Calendar Grid
-  calendarGrid: {
+  gridCellsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    backgroundColor: colors.card,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 6,
-    marginBottom: 16,
+    marginTop: 8,
+  },
+  cellEmpty: {
+    width: '14.28%',
+    height: 64,
   },
   calendarCell: {
-    width: '14.285%',
-    height: 72,
-    padding: 4,
+    width: '14.28%',
+    height: 64,
+    padding: 3,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
     borderRadius: 10,
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  calendarCellMuted: {
-    opacity: 0.35,
   },
   calendarCellToday: {
+    backgroundColor: colors.cardElevated,
+    borderWidth: 1,
     borderColor: colors.primary,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
   },
-  cellDayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cellDayNumber: {
+  dayNumText: {
     color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 3,
   },
-  cellDayNumberMuted: {
-    color: colors.textTertiary,
-  },
-  cellDayNumberToday: {
+  dayNumTextToday: {
     color: colors.primaryLight,
     fontWeight: '900',
   },
-  todayIndicatorDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: colors.primary,
-  },
-  cellShiftBadge: {
-    borderWidth: 1,
-    borderRadius: 6,
+  shiftPill: {
+    width: '100%',
     paddingVertical: 2,
-    paddingHorizontal: 2,
+    borderRadius: 6,
     alignItems: 'center',
   },
-  cellShiftText: {
+  shiftPillText: {
     fontSize: 9,
     fontWeight: '800',
-    letterSpacing: -0.2,
   },
 
   // Legend
   legendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     backgroundColor: colors.card,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 16,
-  },
-  legendTitle: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
-  legendGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    padding: 12,
   },
   legendItem: {
     flexDirection: 'row',
@@ -910,17 +753,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  legendLabel: {
+  legendText: {
     color: colors.textSecondary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
 
-  // Modal Sheet
+  // Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -932,7 +775,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     borderTopWidth: 1,
     borderTopColor: colors.cardBorder,
-    padding: 22,
+    padding: 24,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -963,32 +806,41 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  shiftTypeSelector: {
+  presetsGrid: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
     marginBottom: 16,
   },
-  typeOption: {
+  presetCard: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: colors.backgroundSecondary,
-    borderColor: colors.cardBorder,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 10,
-    gap: 3,
+    borderColor: colors.cardBorder,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    gap: 4,
   },
-  typeOptionText: {
+  presetCardSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryBg,
+  },
+  presetCardText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  presetTimeText: {
     color: colors.textTertiary,
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   timeInputsRow: {
     flexDirection: 'row',
     gap: 12,
+    marginBottom: 16,
   },
   textInput: {
     backgroundColor: colors.backgroundSecondary,
@@ -1000,14 +852,13 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
-    marginBottom: 14,
   },
-  dayModalActionsRow: {
+  modalActionsRow: {
     flexDirection: 'row',
     gap: 10,
     marginTop: 6,
   },
-  deleteShiftButton: {
+  deleteButton: {
     width: 50,
     height: 50,
     borderRadius: 14,
@@ -1015,85 +866,93 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveShiftButton: {
+  saveButton: {
     backgroundColor: colors.primary,
     borderRadius: 14,
     height: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveShiftButtonText: {
+  saveButtonText: {
     color: colors.textInverse,
     fontSize: 15,
     fontWeight: '800',
   },
 
-  // Week Editor Styles
-  weekToolbar: {
+  // Bulk modal
+  bulkQuickActionsRow: {
     flexDirection: 'row',
     gap: 8,
     marginBottom: 12,
   },
-  weekToolbarButton: {
+  copyPrevButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    borderColor: colors.cardBorder,
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
     borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 8,
+    borderRadius: 12,
+    paddingVertical: 9,
     gap: 5,
   },
-  weekToolbarText: {
-    color: colors.textSecondary,
+  copyPrevButtonText: {
+    color: colors.primaryLight,
     fontSize: 11,
     fontWeight: '700',
   },
-  weekDayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 8,
-  },
-  weekDayLabelCol: {
-    width: 44,
-    alignItems: 'center',
-  },
-  weekDayName: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  weekDayDate: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  weekDayPillsRow: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: 4,
-    marginLeft: 8,
-  },
-  weekDayPill: {
+  monFriButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.backgroundSecondary,
     borderColor: colors.cardBorder,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 8,
+    borderRadius: 12,
+    paddingVertical: 9,
   },
-  weekDayPillText: {
+  monFriButtonText: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  bulkDayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+  },
+  bulkDayName: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+    width: 40,
+  },
+  bulkTypeButtons: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  bulkTypePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  bulkTypePillActive: {
+    backgroundColor: colors.primaryBg,
+    borderColor: colors.primary,
+  },
+  bulkTypePillText: {
     color: colors.textTertiary,
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  bulkTypePillTextActive: {
+    color: colors.primaryLight,
   },
 });

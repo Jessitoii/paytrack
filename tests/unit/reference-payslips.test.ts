@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { calculateGrossPayroll, calculateNetPayroll } from '../../shared/payroll/engine.js';
-import { CARRIERE_AH_PROFILE_2026 } from '../../shared/payroll/profiles.js';
-import type { CalculatedWorkSession } from '../../shared/types/time.js';
+import { calculateGrossPayroll, calculateNetPayroll } from '../../shared/payroll/engine';
+import { CARRIERE_AH_PROFILE_2026 } from '../../shared/payroll/profiles';
+import type { CalculatedWorkSession } from '../../shared/types/time';
 
 describe('Dedicated Reference Payslip Verification Suite — Week 33 & Week 34', () => {
   describe('Week 33 Reference Payslip Verification (loon_82022093.pdf)', () => {

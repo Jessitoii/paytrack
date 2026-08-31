@@ -1,4 +1,4 @@
-import type { Decimal } from '../money/decimal.js';
+import type { Decimal } from '../money/decimal';
 
 export type CalculationAccuracyType = 'EXACT' | 'ESTIMATED' | 'ACTUAL_PAYSLIP';
 

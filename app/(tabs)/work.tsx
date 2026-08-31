@@ -28,10 +28,8 @@ import {
   CheckCircle2,
   Trash2,
   Edit3,
-  Sparkles,
-  ArrowRight,
 } from 'lucide-react-native';
-import { api } from '../../src/services/api';
+import { workRepository } from '../../src/database';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
@@ -64,15 +62,15 @@ export default function TrackWorkScreen() {
   const [editUnpaid30, setEditUnpaid30] = useState(true);
   const [editNotes, setEditNotes] = useState('');
 
-  const { data: workData, isLoading, refetch } = useQuery({
-    queryKey: ['workSessions'],
-    queryFn: () => api.listWorkSessions(),
+  const { data: workSessions, isLoading } = useQuery({
+    queryKey: ['localWorkSessions'],
+    queryFn: () => workRepository.listWorkSessions(),
   });
 
-  const activeSession = workData?.sessions?.find((s: any) => s.status === 'WORKING');
-  const pastSessions = workData?.sessions?.filter((s: any) => s.status !== 'WORKING') || [];
+  const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
+  const pastSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
 
-  // Helper to format Date to HH:MM in Europe/Amsterdam or local
+  // Helper to format Date to HH:MM
   const getCurrentHHMM = () => {
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
@@ -113,10 +111,10 @@ export default function TrackWorkScreen() {
 
   // Mutations
   const startMutation = useMutation({
-    mutationFn: () => api.startWork(),
+    mutationFn: () => workRepository.startWork(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
@@ -124,25 +122,25 @@ export default function TrackWorkScreen() {
   const finishMutation = useMutation({
     mutationFn: (payload: { rawFinish: Date; breaks: any[]; notes?: string }) => {
       if (!activeSession) throw new Error('No active session found');
-      return api.finishWork(activeSession.id, payload);
+      return workRepository.finishWork(activeSession.id, payload);
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setFinishModalVisible(false);
       Alert.alert(
         'Shift Finished Successfully',
-        `Rounded Finish: ${formatTimeHHMM(data.session.roundedFinish)}\nPaid Time: ${formatMinutes(data.calculation.paidMinutes)}\nGross: ${formatEUR(data.calculation.baseGross || 0)}`
+        `Rounded Finish: ${formatTimeHHMM(data.session.roundedFinish)}\nPaid Time: ${formatMinutes(data.calculation.paidMinutes)}\nEst. Gross: ${formatEUR((data.calculation.paidMinutes / 60) * 16.34)}`
       );
     },
     onError: (err: any) => Alert.alert('Finish Error', err.message),
   });
 
   const manualWorkMutation = useMutation({
-    mutationFn: (payload: any) => api.createManualWork(payload),
+    mutationFn: (payload: any) => workRepository.createManualWork(payload),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setManualModalVisible(false);
       Alert.alert(
         'Manual Session Saved',
@@ -154,24 +152,23 @@ export default function TrackWorkScreen() {
 
   const updateWorkMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: any }) =>
-      api.updateWork(id, payload),
+      workRepository.updateWork(id, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setEditModalVisible(false);
-      Alert.alert('Session Updated', 'Work session recalculated and saved.');
+      Alert.alert('Session Updated', 'Work session recalculated and saved locally.');
     },
     onError: (err: any) => Alert.alert('Update Error', err.message),
   });
 
   const deleteWorkMutation = useMutation({
-    mutationFn: (id: string) =>
-      api.updateWork(id, { status: 'CANCELLED' }),
+    mutationFn: (id: string) => workRepository.deleteWork(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setEditModalVisible(false);
-      Alert.alert('Session Deleted', 'Work session removed from payroll.');
+      Alert.alert('Session Deleted', 'Work session removed.');
     },
     onError: (err: any) => Alert.alert('Delete Error', err.message),
   });
@@ -197,7 +194,6 @@ export default function TrackWorkScreen() {
     const rawFinish = new Date(startDate);
     rawFinish.setHours(fh, fm, 0, 0);
 
-    // If finish hour is earlier than start hour, it crossed midnight
     if (fh < startDate.getHours()) {
       rawFinish.setDate(rawFinish.getDate() + 1);
     }
@@ -311,7 +307,7 @@ export default function TrackWorkScreen() {
   currentSun.setHours(23, 59, 59, 999);
 
   const totalPaidMinutesThisWeek =
-    workData?.sessions?.reduce((acc: number, s: any) => {
+    workSessions?.reduce((acc: number, s: any) => {
       if (s.status !== 'COMPLETED' && s.status !== 'EDITED') return acc;
       const sDate = new Date(s.actualStart);
       if (sDate >= currentMon && sDate <= currentSun) {

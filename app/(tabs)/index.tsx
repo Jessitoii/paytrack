@@ -5,65 +5,70 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   StyleSheet,
   SafeAreaView,
   Platform,
   StatusBar,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Clock,
   TrendingUp,
   Calendar,
   ArrowUpRight,
   ShieldCheck,
-  LogOut,
+  Settings,
   Play,
   CheckCircle2,
   Wallet,
-  AlertTriangle,
-  ArrowRight,
   Zap,
 } from 'lucide-react-native';
-import { api } from '../../src/services/api';
-import { useAuth } from '../../src/context/AuthContext';
+import {
+  workRepository,
+  shiftRepository,
+  financeRepository,
+  userRepository,
+} from '../../src/database';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user, logout } = useAuth();
 
-  // Auto-Start Check & Reconciliation on Mount
+  // Local Auto-Start Reconciliation on Mount
   useEffect(() => {
-    api.checkAutoStart().then((res) => {
+    workRepository.reconcileAutoStart().then((res) => {
       if (res.autoStartedCount > 0) {
-        queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-        queryClient.invalidateQueries({ queryKey: ['overview'] });
+        queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
+        queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       }
     }).catch(() => {});
   }, []);
 
-  const { data: workData, isLoading: workLoading, refetch: refetchWork } = useQuery({
-    queryKey: ['workSessions'],
-    queryFn: () => api.listWorkSessions(),
+  const { data: profile } = useQuery({
+    queryKey: ['localUserProfile'],
+    queryFn: () => userRepository.getProfile(),
   });
 
-  const { data: shiftsData, refetch: refetchShifts } = useQuery({
-    queryKey: ['shifts'],
-    queryFn: () => api.listShifts(),
+  const { data: workSessions, isLoading: workLoading, refetch: refetchWork } = useQuery({
+    queryKey: ['localWorkSessions'],
+    queryFn: () => workRepository.listWorkSessions(),
   });
 
-  const { data: financeData, refetch: refetchFinance } = useQuery({
-    queryKey: ['overview'],
-    queryFn: () => api.getOverview(),
+  const { data: shifts, refetch: refetchShifts } = useQuery({
+    queryKey: ['localShifts'],
+    queryFn: () => shiftRepository.listShifts(),
   });
 
-  const activeSession = workData?.sessions?.find((s: any) => s.status === 'WORKING');
-  const completedSessions = workData?.sessions?.filter((s: any) => s.status !== 'WORKING') || [];
+  const { data: financeOverview, refetch: refetchFinance } = useQuery({
+    queryKey: ['localFinanceOverview'],
+    queryFn: () => financeRepository.getMonthlyOverview(),
+  });
+
+  const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
+  const completedSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
   const latestCompleted = completedSessions[0];
 
   // Calculate Current ISO Week bounds strictly
@@ -77,7 +82,7 @@ export default function DashboardScreen() {
   currentSun.setHours(23, 59, 59, 999);
 
   const totalPaidMinutesThisWeek =
-    workData?.sessions?.reduce((acc: number, s: any) => {
+    workSessions?.reduce((acc: number, s: any) => {
       if (s.status !== 'COMPLETED' && s.status !== 'EDITED') return acc;
       const sDate = new Date(s.actualStart);
       if (sDate >= currentMon && sDate <= currentSun) {
@@ -87,26 +92,19 @@ export default function DashboardScreen() {
     }, 0) || 0;
 
   const todayStr = new Date().toISOString().substring(0, 10);
-  const todayShift = shiftsData?.shifts?.find(
-    (s: any) => new Date(s.date).toISOString().substring(0, 10) === todayStr
+  const todayShift = shifts?.find(
+    (s: any) => s.date.substring(0, 10) === todayStr
   );
-  const nextShift = shiftsData?.shifts?.find(
-    (s: any) => new Date(s.date).toISOString().substring(0, 10) >= todayStr
+  const nextShift = shifts?.find(
+    (s: any) => s.date.substring(0, 10) >= todayStr
   );
 
   const onRefresh = () => {
-    api.checkAutoStart().finally(() => {
+    workRepository.reconcileAutoStart().finally(() => {
       refetchWork();
       refetchShifts();
       refetchFinance();
     });
-  };
-
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out of PayTrack?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => logout() },
-    ]);
   };
 
   // Time-based greeting
@@ -135,7 +133,7 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.greetingText}>{greeting},</Text>
-            <Text style={styles.userNameText}>{user?.name || 'Worker'}</Text>
+            <Text style={styles.userNameText}>{profile?.name || 'Alper'}</Text>
           </View>
 
           <View style={styles.headerActions}>
@@ -143,8 +141,12 @@ export default function DashboardScreen() {
               <ShieldCheck size={14} color={colors.primary} />
               <Text style={styles.employerBadgeText}>AH Bleiswijk</Text>
             </View>
-            <TouchableOpacity onPress={handleLogout} activeOpacity={0.7} style={styles.logoutButton}>
-              <LogOut size={16} color={colors.textSecondary} />
+            <TouchableOpacity
+              onPress={() => router.push('/(tabs)/settings' as any)}
+              activeOpacity={0.7}
+              style={styles.settingsButton}
+            >
+              <Settings size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -282,26 +284,26 @@ export default function DashboardScreen() {
             </View>
             <View style={styles.savingsRateBadge}>
               <Text style={styles.savingsRateText}>
-                {financeData?.overview?.savings?.savingsRatePercentage ?? 0}% Saved
+                {financeOverview?.savings?.savingsRatePercentage ?? 0}% Saved
               </Text>
             </View>
           </View>
 
           <Text style={styles.monthlySavingsAmount}>
-            {formatEUR(financeData?.overview?.savings?.monthlySavings ?? 0)}
+            {formatEUR(financeOverview?.savings?.monthlySavings ?? 0)}
           </Text>
 
           <View style={styles.financeWellsRow}>
             <View style={styles.financeWell}>
               <Text style={styles.wellLabel}>Total Income</Text>
               <Text style={styles.wellIncomeValue}>
-                {formatEUR(financeData?.overview?.income?.actual ?? 0)}
+                {formatEUR(financeOverview?.income?.actual ?? 0)}
               </Text>
             </View>
             <View style={styles.financeWell}>
               <Text style={styles.wellLabel}>Total Expenses</Text>
               <Text style={styles.wellExpenseValue}>
-                {formatEUR(financeData?.overview?.expenses?.total ?? 0)}
+                {formatEUR(financeOverview?.expenses?.total ?? 0)}
               </Text>
             </View>
           </View>
@@ -388,7 +390,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  logoutButton: {
+  settingsButton: {
     width: 36,
     height: 36,
     borderRadius: 18,

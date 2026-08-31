@@ -1,12 +1,12 @@
 import '../global.css';
-import React, { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AuthProvider, useAuth } from '../src/context/AuthContext';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { colors } from '../src/theme/colors';
+import { initializeDatabase } from '../src/database/init';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,49 +17,38 @@ const queryClient = new QueryClient({
   },
 });
 
-function NavigationGuard({ children }: { children: React.ReactNode }) {
-  const { token, isLoading } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
+export default function RootLayout() {
+  const [isDbReady, setIsDbReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isLoading) return;
+    initializeDatabase()
+      .then(() => setIsDbReady(true))
+      .catch((err) => {
+        console.error('Failed to initialize local database:', err);
+        setDbError(err.message || 'Database initialization failed');
+      });
+  }, []);
 
-    const inAuthGroup = (segments as any[])[0] === '(auth)';
-
-    if (!token && !inAuthGroup) {
-      // Redirect to login if not authenticated
-      router.replace('/(auth)/login' as any);
-    } else if (token && inAuthGroup) {
-      // Redirect to main tabs if authenticated
-      router.replace('/(tabs)' as any);
-    }
-  }, [token, isLoading, segments]);
-
-  if (isLoading) {
+  if (!isDbReady) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        {dbError ? (
+          <Text style={{ color: colors.danger, fontWeight: '700' }}>Error: {dbError}</Text>
+        ) : (
+          <ActivityIndicator size="large" color={colors.primary} />
+        )}
       </View>
     );
   }
 
-  return <>{children}</>;
-}
-
-export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <StatusBar style="light" />
-          <NavigationGuard>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-              <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            </Stack>
-          </NavigationGuard>
-        </AuthProvider>
+        <StatusBar style="light" />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        </Stack>
       </QueryClientProvider>
     </SafeAreaProvider>
   );

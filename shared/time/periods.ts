@@ -1,5 +1,5 @@
-import { roundFinishDateTo5Minutes } from './rounding.js';
-import type { TimeBreak, CalculatedWorkSession, PremiumSegment } from '../types/time.js';
+import { roundFinishDateTo5Minutes } from './rounding';
+import type { TimeBreak, CalculatedWorkSession, PremiumSegment } from '../types/time';
 
 export interface PremiumRulesConfig {
   eveningStartHour: number; // 22

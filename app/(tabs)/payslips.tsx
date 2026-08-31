@@ -10,87 +10,44 @@ import {
   SafeAreaView,
   Platform,
   StatusBar,
-  ActivityIndicator,
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import {
   FileText,
-  Upload,
-  CheckCircle,
-  Clock,
-  Sparkles,
+  CheckCircle2,
+  AlertTriangle,
   ArrowRight,
   ShieldCheck,
+  Building2,
+  Calendar,
+  Layers,
   X,
-  FileCheck2,
+  UploadCloud,
 } from 'lucide-react-native';
-import { api } from '../../src/services/api';
+import { payslipRepository } from '../../src/database';
 import { formatEUR, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
 export default function PayslipsScreen() {
   const queryClient = useQueryClient();
+  const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
   const [reconcileModalVisible, setReconcileModalVisible] = useState(false);
-  const [reconcileData, setReconcileData] = useState<any>(null);
-  const [isReconciling, setIsReconciling] = useState(false);
 
-  const { data: payslipsData, isLoading, refetch } = useQuery({
-    queryKey: ['payslips'],
-    queryFn: () => api.listPayslips(),
+  const { data: payslips, isLoading } = useQuery({
+    queryKey: ['localPayslips'],
+    queryFn: () => payslipRepository.listPayslips(),
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: (payload: { fileBase64: string; fileName: string }) =>
-      api.uploadPayslip(payload),
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ['payslips'] });
-      Alert.alert(
-        'Payslip Parsed Successfully',
-        `Week ${res.extractedData?.payrollPeriod?.weekNumber || ''} parsed with ${res.extractedData?.totals?.totalGross ? formatEUR(res.extractedData.totals.totalGross) : ''} gross pay.`
-      );
-    },
-    onError: (err: any) => Alert.alert('Upload Error', err.message),
+  const { data: reconciliationData, refetch: refetchReconciliation } = useQuery({
+    queryKey: ['localReconciliation', selectedPayslipId],
+    queryFn: () => (selectedPayslipId ? payslipRepository.reconcilePayslip(selectedPayslipId) : null),
+    enabled: !!selectedPayslipId,
   });
 
-  const handlePickDocument = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled || !result.assets?.[0]) return;
-
-      const file = result.assets[0];
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      uploadMutation.mutate({
-        fileBase64: base64,
-        fileName: file.name,
-      });
-    } catch (err: any) {
-      Alert.alert('File Picker Error', err.message);
-    }
+  const handleOpenReconcile = (id: string) => {
+    setSelectedPayslipId(id);
+    setReconcileModalVisible(true);
   };
-
-  const handleOpenReconcile = async (payslipId: string) => {
-    try {
-      setIsReconciling(true);
-      const res = await api.reconcilePayslip(payslipId);
-      setReconcileData(res);
-      setReconcileModalVisible(true);
-    } catch (err: any) {
-      Alert.alert('Reconciliation Error', err.message);
-    } finally {
-      setIsReconciling(false);
-    }
-  };
-
-  const payslips = payslipsData?.payslips || [];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -99,122 +56,89 @@ export default function PayslipsScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerSubtitle}>Official Statements</Text>
-            <Text style={styles.headerTitle}>Payslips & AI</Text>
+            <Text style={styles.headerSubtitle}>Carrière Personeelsdiensten</Text>
+            <Text style={styles.headerTitle}>Official Payslips</Text>
           </View>
-          <View style={styles.aiBadge}>
-            <Sparkles size={14} color={colors.primaryLight} />
-            <Text style={styles.aiBadgeText}>AI Reconciliation</Text>
+          <View style={styles.statusBadge}>
+            <ShieldCheck size={14} color={colors.primaryLight} />
+            <Text style={styles.statusBadgeText}>Local Storage</Text>
           </View>
         </View>
 
-        {/* 1. Upload Payslip Box */}
-        <TouchableOpacity
-          onPress={handlePickDocument}
-          disabled={uploadMutation.isPending}
-          activeOpacity={0.8}
-          style={styles.uploadCard}
-        >
-          <View style={styles.uploadIconWrapper}>
-            <Upload size={24} color={colors.primary} />
+        {/* Hero Info Card */}
+        <View style={styles.heroCard}>
+          <View style={styles.heroHeaderRow}>
+            <Building2 size={18} color={colors.primary} />
+            <Text style={styles.heroTitle}>Deterministic Payslip Engine</Text>
           </View>
-          <Text style={styles.uploadTitle}>
-            {uploadMutation.isPending ? 'Analyzing PDF with AI...' : 'Upload Official Payslip (PDF)'}
+          <Text style={styles.heroSubtitle}>
+            Official payslips stored locally and reconciled line-by-line against your recorded work sessions.
           </Text>
-          <Text style={styles.uploadSubtitle}>
-            Extract wages, deductions, allowances, and verify bank payments
-          </Text>
+        </View>
 
-          {uploadMutation.isPending && (
-            <ActivityIndicator color={colors.primary} style={{ marginTop: 10 }} />
-          )}
-        </TouchableOpacity>
-
-        {/* 2. Payslips Document List */}
+        {/* Payslip History List */}
         <View style={styles.sectionHeaderRow}>
           <FileText size={16} color={colors.textSecondary} />
           <Text style={styles.sectionTitle}>CONFIRMED STATEMENTS</Text>
         </View>
 
-        {isLoading ? (
-          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 30 }} />
-        ) : payslips.length === 0 ? (
+        {payslips?.length === 0 ? (
           <View style={styles.emptyCard}>
-            <FileCheck2 size={36} color={colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No Payslips Uploaded</Text>
-            <Text style={styles.emptySubtitle}>
-              Upload your Carrière / Albert Heijn payslip PDF above to audit your payroll.
-            </Text>
+            <Text style={styles.emptyCardText}>No payslips imported yet.</Text>
           </View>
         ) : (
-          payslips.map((ps: any) => (
-            <View key={ps.id} style={styles.documentCard}>
-              <View style={styles.docCardTop}>
+          payslips?.map((slip: any) => (
+            <TouchableOpacity
+              key={slip.id}
+              onPress={() => handleOpenReconcile(slip.id)}
+              activeOpacity={0.75}
+              style={styles.slipCard}
+            >
+              <View style={styles.slipCardHeader}>
                 <View>
-                  <Text style={styles.docPeriodTitle}>
-                    {formatDateShort(ps.periodStart)} – {formatDateShort(ps.periodEnd)}
+                  <Text style={styles.slipFileName}>{slip.fileName}</Text>
+                  <Text style={styles.slipPeriod}>
+                    Period: {formatDateShort(slip.periodStart)} – {formatDateShort(slip.periodEnd)}
                   </Text>
-                  <Text style={styles.docFileName}>{ps.fileName}</Text>
                 </View>
-                <View
-                  style={[
-                    styles.statusPill,
-                    ps.parsingStatus === 'CONFIRMED'
-                      ? styles.statusPillConfirmed
-                      : styles.statusPillParsed,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusPillText,
-                      ps.parsingStatus === 'CONFIRMED'
-                        ? styles.statusTextConfirmed
-                        : styles.statusTextParsed,
-                    ]}
-                  >
-                    {ps.parsingStatus}
-                  </Text>
+                <View style={styles.confirmedPill}>
+                  <CheckCircle2 size={12} color={colors.primaryLight} />
+                  <Text style={styles.confirmedPillText}>Confirmed</Text>
                 </View>
               </View>
 
-              <View style={styles.docDivider} />
-
-              <View style={styles.docFinancialGrid}>
-                <View style={styles.financialCol}>
-                  <Text style={styles.finLabel}>Total Gross</Text>
-                  <Text style={styles.finValue}>{formatEUR(ps.totalGross)}</Text>
+              <View style={styles.slipAmountsRow}>
+                <View style={styles.slipAmountCol}>
+                  <Text style={styles.amountColLabel}>Gross</Text>
+                  <Text style={styles.grossAmountText}>{formatEUR(slip.totalGross)}</Text>
                 </View>
-                <View style={styles.financialCol}>
-                  <Text style={styles.finLabel}>Total Net</Text>
-                  <Text style={styles.finValue}>{formatEUR(ps.totalNet)}</Text>
+                <View style={styles.slipAmountCol}>
+                  <Text style={styles.amountColLabel}>Net Payout</Text>
+                  <Text style={styles.netAmountText}>{formatEUR(slip.totalNet)}</Text>
                 </View>
-                <View style={styles.financialCol}>
-                  <Text style={styles.finLabel}>Bank Payment</Text>
-                  <Text style={styles.finBankValue}>{formatEUR(ps.bankPayment)}</Text>
+                <View style={styles.slipAmountCol}>
+                  <Text style={styles.amountColLabel}>Bank Payout</Text>
+                  <Text style={styles.bankAmountText}>{formatEUR(slip.bankPayment)}</Text>
                 </View>
               </View>
 
-              <TouchableOpacity
-                onPress={() => handleOpenReconcile(ps.id)}
-                activeOpacity={0.8}
-                style={styles.reconcileButton}
-              >
-                <Text style={styles.reconcileButtonText}>Audit & Reconcile Calculation</Text>
+              <View style={styles.reconcileActionRow}>
+                <Text style={styles.reconcileActionText}>Reconcile against work sessions</Text>
                 <ArrowRight size={14} color={colors.primaryLight} />
-              </TouchableOpacity>
-            </View>
+              </View>
+            </TouchableOpacity>
           ))
         )}
       </ScrollView>
 
-      {/* Reconciliation Breakdown Modal */}
+      {/* Reconciliation Modal */}
       <Modal visible={reconcileModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Payroll Reconciliation</Text>
-                <Text style={styles.modalSubtitle}>Estimated vs. Official Payslip</Text>
+                <Text style={styles.modalTitle}>Payslip Reconciliation</Text>
+                <Text style={styles.modalSubtitle}>Line-by-Line Engine Audit</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setReconcileModalVisible(false)}
@@ -224,69 +148,61 @@ export default function PayslipsScreen() {
               </TouchableOpacity>
             </View>
 
-            {reconcileData ? (
-              <ScrollView style={{ maxHeight: 400 }}>
-                <View style={styles.reconcileMatchCard}>
-                  <ShieldCheck size={20} color={colors.primary} />
-                  <Text style={styles.reconcileMatchText}>
-                    Status:{' '}
-                    {reconcileData.reconciliation?.matchStatus === 'EXACT_MATCH'
-                      ? '100% Exact Match Verified'
-                      : 'Reconciliation Verified with Minor Estimates'}
-                  </Text>
-                </View>
+            {/* Reconciliation Status Badge */}
+            <View
+              style={[
+                styles.reconcileStatusCard,
+                reconciliationData?.reconciliation?.matchStatus === 'EXACT_MATCH'
+                  ? styles.matchExact
+                  : styles.matchVariance,
+              ]}
+            >
+              <CheckCircle2
+                size={16}
+                color={
+                  reconciliationData?.reconciliation?.matchStatus === 'EXACT_MATCH'
+                    ? colors.primaryLight
+                    : colors.amber
+                }
+              />
+              <Text style={styles.reconcileStatusText}>
+                {reconciliationData?.reconciliation?.matchStatus === 'EXACT_MATCH'
+                  ? 'Deterministic Exact Match (100% Accuracy)'
+                  : 'Audited with Minor Variance (< €0.50)'}
+              </Text>
+            </View>
 
-                <View style={styles.lineItemTable}>
-                  <View style={styles.tableHeaderRow}>
-                    <Text style={[styles.tableCol, { flex: 2, color: colors.textSecondary }]}>
-                      Component
-                    </Text>
-                    <Text
-                      style={[
-                        styles.tableCol,
-                        { flex: 1, textAlign: 'right', color: colors.textSecondary },
-                      ]}
-                    >
-                      Estimate
-                    </Text>
-                    <Text
-                      style={[
-                        styles.tableCol,
-                        { flex: 1, textAlign: 'right', color: colors.textSecondary },
-                      ]}
-                    >
-                      Actual
+            {/* Line Items Comparison Table */}
+            <ScrollView style={{ maxHeight: 260, marginVertical: 10 }}>
+              {reconciliationData?.reconciliation?.lineItems?.map((item: any, idx: number) => (
+                <View key={idx} style={styles.lineItemRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.lineItemName}>{item.name}</Text>
+                    <Text style={styles.lineItemEstimate}>
+                      Estimated: {formatEUR(item.estimatedAmount)}
                     </Text>
                   </View>
-
-                  {reconcileData.reconciliation?.lineItems?.map((item: any, idx: number) => (
-                    <View key={idx} style={styles.tableRow}>
-                      <Text style={[styles.tableCol, { flex: 2, color: colors.textPrimary }]}>
-                        {item.name}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.tableCol,
-                          { flex: 1, textAlign: 'right', color: colors.textSecondary },
-                        ]}
-                      >
-                        {formatEUR(item.estimatedAmount)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.tableCol,
-                          { flex: 1, textAlign: 'right', color: colors.primaryLight, fontWeight: '700' },
-                        ]}
-                      >
-                        {formatEUR(item.actualAmount)}
-                      </Text>
-                    </View>
-                  ))}
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.lineItemActual}>Actual: {formatEUR(item.actualAmount)}</Text>
+                    <Text
+                      style={[
+                        styles.lineItemDiff,
+                        item.difference === 0 ? { color: colors.primaryLight } : { color: colors.amber },
+                      ]}
+                    >
+                      Diff: {formatEUR(item.difference)}
+                    </Text>
+                  </View>
                 </View>
-              </ScrollView>
-            ) : (
-              <ActivityIndicator color={colors.primary} />
-            )}
+              ))}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() => setReconcileModalVisible(false)}
+              style={styles.closeModalButton}
+            >
+              <Text style={styles.closeModalButtonText}>Close Audit</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -311,7 +227,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   headerSubtitle: {
     color: colors.textSecondary,
@@ -324,7 +240,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
-  aiBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.primaryBg,
@@ -335,46 +251,39 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 5,
   },
-  aiBadgeText: {
+  statusBadgeText: {
     color: colors.primaryLight,
     fontSize: 11,
     fontWeight: '700',
   },
 
-  // Upload Box
-  uploadCard: {
+  // Hero Card
+  heroCard: {
     backgroundColor: colors.card,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: 'rgba(16, 185, 129, 0.35)',
-    borderStyle: 'dashed',
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 24,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 18,
+    marginBottom: 20,
   },
-  uploadIconWrapper: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.primaryBg,
+  heroHeaderRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 6,
   },
-  uploadTitle: {
+  heroTitle: {
     color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  uploadSubtitle: {
+  heroSubtitle: {
     color: colors.textSecondary,
     fontSize: 12,
-    textAlign: 'center',
-    marginTop: 4,
     lineHeight: 16,
   },
 
-  // Document List
+  // Section Header
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -389,120 +298,105 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     backgroundColor: colors.card,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 36,
+    padding: 24,
     alignItems: 'center',
-    marginTop: 10,
   },
-  emptyTitle: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
-    marginTop: 12,
-  },
-  emptySubtitle: {
-    color: colors.textSecondary,
+  emptyCardText: {
+    color: colors.textTertiary,
     fontSize: 13,
-    textAlign: 'center',
-    marginTop: 4,
+    fontWeight: '500',
   },
 
-  // Document Card
-  documentCard: {
+  // Slip Card
+  slipCard: {
     backgroundColor: colors.card,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 18,
-    marginBottom: 14,
+    marginBottom: 12,
   },
-  docCardTop: {
+  slipCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    marginBottom: 14,
   },
-  docPeriodTitle: {
+  slipFileName: {
     color: colors.textPrimary,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
   },
-  docFileName: {
-    color: colors.textTertiary,
+  slipPeriod: {
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '500',
     marginTop: 2,
   },
-  statusPill: {
+  confirmedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
+    gap: 4,
   },
-  statusPillConfirmed: {
-    backgroundColor: colors.primaryBg,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-  },
-  statusPillParsed: {
-    backgroundColor: colors.blueBg,
-    borderColor: 'rgba(56, 189, 248, 0.4)',
-  },
-  statusPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  statusTextConfirmed: {
+  confirmedPillText: {
     color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
   },
-  statusTextParsed: {
-    color: colors.blue,
-  },
-  docDivider: {
-    height: 1,
-    backgroundColor: colors.cardBorder,
-    marginVertical: 12,
-  },
-  docFinancialGrid: {
+  slipAmountsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
+    marginBottom: 12,
   },
-  financialCol: {
+  slipAmountCol: {
     flex: 1,
   },
-  finLabel: {
+  amountColLabel: {
     color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
   },
-  finValue: {
+  grossAmountText: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     marginTop: 2,
   },
-  finBankValue: {
+  netAmountText: {
     color: colors.primaryLight,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '800',
     marginTop: 2,
   },
-  reconcileButton: {
-    backgroundColor: colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+  bankAmountText: {
+    color: colors.blue,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  reconcileActionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  reconcileButtonText: {
+  reconcileActionText: {
     color: colors.primaryLight,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
   },
 
   // Modal
@@ -523,7 +417,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   modalTitle: {
     color: colors.textPrimary,
@@ -543,42 +437,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  reconcileMatchCard: {
+  reconcileStatusCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+    marginBottom: 10,
+  },
+  matchExact: {
     backgroundColor: colors.primaryBg,
     borderColor: 'rgba(16, 185, 129, 0.3)',
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    gap: 8,
-    marginBottom: 14,
   },
-  reconcileMatchText: {
-    color: colors.primaryLight,
+  matchVariance: {
+    backgroundColor: colors.amberBg,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  reconcileStatusText: {
+    color: colors.textPrimary,
     fontSize: 12,
     fontWeight: '700',
-    flex: 1,
   },
-  lineItemTable: {
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 12,
-  },
-  tableHeaderRow: {
+  lineItemRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: colors.cardBorder,
-    paddingBottom: 8,
-    marginBottom: 8,
   },
-  tableRow: {
-    flexDirection: 'row',
-    paddingVertical: 6,
+  lineItemName: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
   },
-  tableCol: {
-    fontSize: 12,
+  lineItemEstimate: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  lineItemActual: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  lineItemDiff: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  closeModalButton: {
+    backgroundColor: colors.cardElevated,
+    borderRadius: 14,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  closeModalButtonText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

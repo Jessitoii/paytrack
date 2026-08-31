@@ -1,4 +1,4 @@
-import type { PayrollProfile } from '../types/payroll.js';
+import type { PayrollProfile } from '../types/payroll';
 
 /**
  * Authoritative Initial Profile for Carrière uitzendbureau / Albert Heijn.

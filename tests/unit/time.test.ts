@@ -4,15 +4,15 @@ import {
   roundFinishTimeStringTo5Minutes,
   formatMinutesToHoursAndMinutes,
   parseTimeToMinutes,
-} from '../../shared/time/rounding.js';
+} from '../../shared/time/rounding';
 import {
   calculateElapsedMinutes,
   calculateBreakTotals,
   segmentWorkSession,
   calculateWorkSession,
   DEFAULT_PREMIUM_CONFIG,
-} from '../../shared/time/periods.js';
-import type { TimeBreak } from '../../shared/types/time.js';
+} from '../../shared/time/periods';
+import type { TimeBreak } from '../../shared/types/time';
 
 describe('Time Rounding Rules (Zebra logout 5-minute upward rounding)', () => {
   it('correctly rounds finish time strings upward to next 5 minutes per specification', () => {

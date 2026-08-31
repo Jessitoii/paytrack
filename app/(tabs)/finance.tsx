@@ -12,130 +12,147 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
-  KeyboardAvoidingView,
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Wallet,
-  Plus,
   TrendingUp,
+  Plus,
+  ArrowUpRight,
+  ArrowDownLeft,
   Target,
-  Tag,
   X,
-  PiggyBank,
-  CheckCircle,
+  CreditCard,
+  PieChart,
+  Tag,
+  Trash2,
 } from 'lucide-react-native';
-import { api } from '../../src/services/api';
-import { formatEUR } from '../../src/lib/formatters';
+import { financeRepository } from '../../src/database';
+import { formatEUR, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
 export default function FinanceScreen() {
   const queryClient = useQueryClient();
+
   const [expenseModalVisible, setExpenseModalVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'EXPENSES' | 'GOALS' | 'FORECAST'>('OVERVIEW');
 
-  // Form states
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [merchant, setMerchant] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  // Add Expense State
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseCategoryId, setExpenseCategoryId] = useState('');
+  const [expenseDescription, setExpenseDescription] = useState('');
+  const [expenseMerchant, setExpenseMerchant] = useState('');
+
+  // Add Goal State
   const [goalName, setGoalName] = useState('');
-  const [goalTarget, setGoalTarget] = useState('');
-  const [goalCurrent, setGoalCurrent] = useState('');
+  const [goalTargetAmount, setGoalTargetAmount] = useState('');
+  const [goalCurrentAmount, setGoalCurrentAmount] = useState('');
 
-  const { data: categoriesData } = useQuery({
-    queryKey: ['categories'],
-    queryFn: () => api.getCategories(),
+  // Queries
+  const { data: overview, isLoading: overviewLoading } = useQuery({
+    queryKey: ['localFinanceOverview'],
+    queryFn: () => financeRepository.getMonthlyOverview(),
   });
 
-  const { data: overviewData, isLoading: overviewLoading } = useQuery({
-    queryKey: ['overview'],
-    queryFn: () => api.getOverview(),
+  const { data: categories } = useQuery({
+    queryKey: ['localExpenseCategories'],
+    queryFn: () => financeRepository.listCategories(),
   });
 
-  const { data: goalsData } = useQuery({
-    queryKey: ['savingsGoals'],
-    queryFn: () => api.listSavingsGoals(),
+  const { data: expenses } = useQuery({
+    queryKey: ['localExpenses'],
+    queryFn: () => financeRepository.listExpenses(),
   });
 
-  const { data: forecastData } = useQuery({
-    queryKey: ['forecast'],
-    queryFn: () => api.getForecast(6),
+  const { data: savingsGoals } = useQuery({
+    queryKey: ['localSavingsGoals'],
+    queryFn: () => financeRepository.listSavingsGoals(),
   });
 
-  const categories = categoriesData?.categories || [];
+  const { data: forecast } = useQuery({
+    queryKey: ['localFinanceForecast'],
+    queryFn: () => financeRepository.getForecast(6),
+  });
 
+  // Mutations
   const createExpenseMutation = useMutation({
-    mutationFn: (payload: any) => api.createExpense(payload),
+    mutationFn: (payload: any) => financeRepository.createExpense(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['overview'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
+      queryClient.invalidateQueries({ queryKey: ['localExpenses'] });
       setExpenseModalVisible(false);
-      setAmount('');
-      setDescription('');
-      setMerchant('');
-      Alert.alert('Expense Recorded', 'Your expense has been saved.');
+      setExpenseAmount('');
+      setExpenseDescription('');
+      setExpenseMerchant('');
+      Alert.alert('Expense Added', 'Expense recorded successfully.');
+    },
+    onError: (err: any) => Alert.alert('Error', err.message),
+  });
+
+  const deleteExpenseMutation = useMutation({
+    mutationFn: (id: string) => financeRepository.deleteExpense(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
+      queryClient.invalidateQueries({ queryKey: ['localExpenses'] });
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
   const createGoalMutation = useMutation({
-    mutationFn: (payload: any) => api.createSavingsGoal(payload),
+    mutationFn: (payload: any) => financeRepository.createSavingsGoal(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['savingsGoals'] });
+      queryClient.invalidateQueries({ queryKey: ['localSavingsGoals'] });
       setGoalModalVisible(false);
       setGoalName('');
-      setGoalTarget('');
-      setGoalCurrent('');
-      Alert.alert('Goal Created', 'Your savings goal has been created.');
+      setGoalTargetAmount('');
+      setGoalCurrentAmount('');
+      Alert.alert('Goal Created', 'New savings goal added.');
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
-  const handleOpenAddExpense = () => {
-    if (categories.length > 0 && !selectedCategoryId) {
-      setSelectedCategoryId(categories[0].id);
+  const handleSaveExpense = () => {
+    const amountNum = parseFloat(expenseAmount.replace(',', '.'));
+    if (isNaN(amountNum) || amountNum <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid expense amount');
+      return;
     }
-    setExpenseModalVisible(true);
-  };
-
-  const handleAddExpense = () => {
-    if (!amount || !description) {
-      Alert.alert('Validation Error', 'Please enter amount and description');
+    if (!expenseDescription.trim()) {
+      Alert.alert('Validation Error', 'Please provide a description');
       return;
     }
 
-    const catId = selectedCategoryId || (categories[0]?.id ?? '');
-    if (!catId) {
-      Alert.alert('Validation Error', 'Please select a valid expense category');
-      return;
-    }
+    const catId = expenseCategoryId || categories?.[0]?.id || 'cat_other';
 
     createExpenseMutation.mutate({
       categoryId: catId,
-      amount: parseFloat(amount),
+      amount: amountNum,
       date: new Date(),
-      description,
-      merchant: merchant || undefined,
+      description: expenseDescription.trim(),
+      merchant: expenseMerchant.trim() || undefined,
     });
   };
 
-  const handleAddGoal = () => {
-    if (!goalName || !goalTarget) {
-      Alert.alert('Validation Error', 'Please enter goal name and target amount');
+  const handleSaveGoal = () => {
+    const targetNum = parseFloat(goalTargetAmount.replace(',', '.'));
+    if (isNaN(targetNum) || targetNum <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid target amount');
+      return;
+    }
+    if (!goalName.trim()) {
+      Alert.alert('Validation Error', 'Please enter a goal name');
       return;
     }
 
+    const currentNum = parseFloat(goalCurrentAmount.replace(',', '.')) || 0;
+
     createGoalMutation.mutate({
-      name: goalName,
-      targetAmount: parseFloat(goalTarget),
-      currentAmount: goalCurrent ? parseFloat(goalCurrent) : 0,
-      color: '#10B981',
-      icon: 'target',
+      name: goalName.trim(),
+      targetAmount: targetNum,
+      currentAmount: currentNum,
     });
   };
-
-  const overview = overviewData?.overview;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -144,220 +161,300 @@ export default function FinanceScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerSubtitle}>Wealth & Savings</Text>
-            <Text style={styles.headerTitle}>Finance Engine</Text>
+            <Text style={styles.headerSubtitle}>Wealth & Budget</Text>
+            <Text style={styles.headerTitle}>Personal Finance</Text>
           </View>
           <TouchableOpacity
-            onPress={handleOpenAddExpense}
+            onPress={() => {
+              if (categories?.length) setExpenseCategoryId(categories[0].id);
+              setExpenseModalVisible(true);
+            }}
             activeOpacity={0.8}
             style={styles.addExpenseButton}
           >
-            <Plus size={18} color={colors.textInverse} />
+            <Plus size={15} color={colors.textInverse} />
             <Text style={styles.addExpenseButtonText}>Add Expense</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 1. Big Monthly Net Savings Hero Card */}
-        <View style={styles.savingsHeroCard}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.sectionLabel}>MONTHLY NET SAVINGS</Text>
-            <View style={styles.savingsRateBadge}>
-              <Text style={styles.savingsRateText}>
-                {overview?.savings?.savingsRatePercentage ?? 0}% SAVINGS RATE
+        {/* Tab Switcher */}
+        <View style={styles.tabSwitcher}>
+          {[
+            { id: 'OVERVIEW', label: 'Overview' },
+            { id: 'EXPENSES', label: 'Expenses' },
+            { id: 'GOALS', label: 'Goals' },
+            { id: 'FORECAST', label: '6M Forecast' },
+          ].map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id as any)}
+              style={[styles.tabButton, activeTab === tab.id && styles.tabButtonActive]}
+            >
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  activeTab === tab.id && styles.tabButtonTextActive,
+                ]}
+              >
+                {tab.label}
               </Text>
-            </View>
-          </View>
-
-          <Text style={styles.netSavingsAmount}>
-            {formatEUR(overview?.savings?.monthlySavings ?? 0)}
-          </Text>
-
-          <View style={styles.incomeExpenseGrid}>
-            <View style={styles.incomeExpenseWell}>
-              <Text style={styles.wellLabel}>Total Income (Earned)</Text>
-              <Text style={styles.incomeValue}>
-                {formatEUR(overview?.income?.actual ?? 0)}
-              </Text>
-            </View>
-            <View style={styles.incomeExpenseWell}>
-              <Text style={styles.wellLabel}>Total Expenses (Spent)</Text>
-              <Text style={styles.expenseValue}>
-                {formatEUR(overview?.expenses?.total ?? 0)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 2. Savings Goals Section */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={styles.iconHeadingRow}>
-              <Target size={18} color={colors.primary} />
-              <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>SAVINGS GOALS</Text>
-            </View>
-            <TouchableOpacity onPress={() => setGoalModalVisible(true)} activeOpacity={0.7}>
-              <Text style={styles.createGoalLink}>+ New Goal</Text>
             </TouchableOpacity>
-          </View>
+          ))}
+        </View>
 
-          {goalsData?.goals?.length === 0 ? (
-            <View style={styles.emptyGoalCard}>
-              <PiggyBank size={32} color={colors.textTertiary} />
-              <Text style={styles.emptyGoalText}>No savings goals set yet.</Text>
+        {/* Tab 1: OVERVIEW */}
+        {activeTab === 'OVERVIEW' && (
+          <View>
+            {/* Monthly Net Savings Hero Card */}
+            <View style={styles.heroCard}>
+              <Text style={styles.heroLabel}>MONTHLY NET SAVINGS</Text>
+              <Text style={styles.heroAmountText}>
+                {formatEUR(overview?.savings?.monthlySavings ?? 0)}
+              </Text>
+              <View style={styles.savingsRateRow}>
+                <View style={styles.savingsPill}>
+                  <TrendingUp size={14} color={colors.primaryLight} />
+                  <Text style={styles.savingsPillText}>
+                    {overview?.savings?.savingsRatePercentage ?? 0}% Savings Rate
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.incomeExpenseRow}>
+                <View style={styles.subStatWell}>
+                  <View style={styles.statIconRow}>
+                    <ArrowDownLeft size={14} color={colors.primaryLight} />
+                    <Text style={styles.statLabel}>Income</Text>
+                  </View>
+                  <Text style={styles.incomeValue}>
+                    {formatEUR(overview?.income?.actual ?? 0)}
+                  </Text>
+                </View>
+
+                <View style={styles.subStatWell}>
+                  <View style={styles.statIconRow}>
+                    <ArrowUpRight size={14} color={colors.danger} />
+                    <Text style={styles.statLabel}>Expenses</Text>
+                  </View>
+                  <Text style={styles.expenseValue}>
+                    {formatEUR(overview?.expenses?.total ?? 0)}
+                  </Text>
+                </View>
+              </View>
             </View>
-          ) : (
-            goalsData?.goals?.map((goal: any) => (
-              <View key={goal.id} style={styles.goalCard}>
-                <View style={styles.goalCardTop}>
-                  <Text style={styles.goalName}>{goal.name}</Text>
-                  <Text style={styles.goalProgressPct}>{goal.progressPercentage}%</Text>
-                </View>
 
-                {/* Progress Bar */}
-                <View style={styles.progressBarTrack}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      { width: `${Math.min(100, goal.progressPercentage)}%` },
-                    ]}
-                  />
-                </View>
-
-                <View style={styles.goalCardBottom}>
-                  <Text style={styles.goalSavedAmount}>{formatEUR(goal.currentAmount)} saved</Text>
-                  <Text style={styles.goalTargetAmount}>Target: {formatEUR(goal.targetAmount)}</Text>
-                </View>
+            {/* Savings Goals Widget */}
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>SAVINGS GOALS</Text>
+                <TouchableOpacity onPress={() => setGoalModalVisible(true)}>
+                  <Plus size={16} color={colors.primaryLight} />
+                </TouchableOpacity>
               </View>
-            ))
-          )}
-        </View>
 
-        {/* 3. 6-Month Projected Wealth Forecast */}
-        <View style={styles.forecastCard}>
-          <View style={styles.iconHeadingRow}>
-            <TrendingUp size={18} color={colors.blue} />
-            <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>6-MONTH WEALTH PROJECTION</Text>
+              {savingsGoals?.length === 0 ? (
+                <Text style={styles.emptyText}>No goals created yet.</Text>
+              ) : (
+                savingsGoals?.map((g: any) => (
+                  <View key={g.id} style={styles.goalRow}>
+                    <View style={styles.goalHeaderRow}>
+                      <Text style={styles.goalName}>{g.name}</Text>
+                      <Text style={styles.goalAmount}>
+                        {formatEUR(g.currentAmount)} / {formatEUR(g.targetAmount)}
+                      </Text>
+                    </View>
+                    <View style={styles.progressBarBg}>
+                      <View
+                        style={[
+                          styles.progressBarFill,
+                          { width: `${g.progressPercentage}%`, backgroundColor: g.color || colors.primary },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
           </View>
-          <Text style={styles.forecastSubtitle}>
-            Estimated cumulative savings based on steady shifts and recurring costs.
-          </Text>
+        )}
 
-          <View style={styles.forecastGrid}>
-            {forecastData?.forecast?.projections?.slice(0, 3).map((p: any) => (
-              <View key={p.monthIndex} style={styles.forecastCol}>
-                <Text style={styles.forecastMonth}>Month +{p.monthIndex}</Text>
-                <Text style={styles.forecastAmount}>{formatEUR(p.projectedSavings)}</Text>
+        {/* Tab 2: EXPENSES */}
+        {activeTab === 'EXPENSES' && (
+          <View>
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>RECENT EXPENSES</Text>
+
+              {expenses?.length === 0 ? (
+                <Text style={styles.emptyText}>No expenses recorded yet.</Text>
+              ) : (
+                expenses?.map((e: any) => (
+                  <View key={e.id} style={styles.expenseItemRow}>
+                    <View style={styles.expenseItemLeft}>
+                      <View style={styles.categoryIconCircle}>
+                        <Tag size={14} color={colors.textPrimary} />
+                      </View>
+                      <View>
+                        <Text style={styles.expenseDesc}>{e.description}</Text>
+                        <Text style={styles.expenseCategorySub}>
+                          {e.categoryName || 'Other'} • {formatDateShort(e.date)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.expenseItemRight}>
+                      <Text style={styles.expenseAmountText}>-{formatEUR(e.amount)}</Text>
+                      <TouchableOpacity
+                        onPress={() => deleteExpenseMutation.mutate(e.id)}
+                        style={{ marginLeft: 8 }}
+                      >
+                        <Trash2 size={14} color={colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Tab 3: GOALS */}
+        {activeTab === 'GOALS' && (
+          <View>
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>ALL SAVINGS GOALS</Text>
+                <TouchableOpacity
+                  onPress={() => setGoalModalVisible(true)}
+                  style={styles.addSmallButton}
+                >
+                  <Plus size={14} color={colors.textInverse} />
+                  <Text style={styles.addSmallButtonText}>New Goal</Text>
+                </TouchableOpacity>
               </View>
-            ))}
+
+              {savingsGoals?.map((g: any) => (
+                <View key={g.id} style={styles.goalRow}>
+                  <View style={styles.goalHeaderRow}>
+                    <Text style={styles.goalName}>{g.name}</Text>
+                    <Text style={styles.goalAmount}>
+                      {formatEUR(g.currentAmount)} / {formatEUR(g.targetAmount)} ({g.progressPercentage}%)
+                    </Text>
+                  </View>
+                  <View style={styles.progressBarBg}>
+                    <View
+                      style={[
+                        styles.progressBarFill,
+                        { width: `${g.progressPercentage}%`, backgroundColor: g.color || colors.primary },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
+
+        {/* Tab 4: FORECAST */}
+        {activeTab === 'FORECAST' && (
+          <View>
+            <View style={styles.heroCard}>
+              <Text style={styles.heroLabel}>6-MONTH WEALTH PROJECTION</Text>
+              <Text style={styles.heroAmountText}>
+                {formatEUR(forecast?.projections?.[5]?.projectedSavings ?? 0)}
+              </Text>
+              <Text style={styles.forecastSub}>
+                Based on current monthly net savings of {formatEUR(forecast?.avgMonthlyNetSavings ?? 800)}
+              </Text>
+            </View>
+
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>MONTH-BY-MONTH ACCUMULATION</Text>
+              {forecast?.projections?.map((p: any) => (
+                <View key={p.monthIndex} style={styles.projectionRow}>
+                  <Text style={styles.projectionMonth}>Month +{p.monthIndex}</Text>
+                  <Text style={styles.projectionAmount}>{formatEUR(p.projectedSavings)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
       </ScrollView>
 
-      {/* Add Expense Modal with Dynamic Category Selector */}
+      {/* Add Expense Modal */}
       <Modal visible={expenseModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
+        <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Expense</Text>
-              <TouchableOpacity
-                onPress={() => setExpenseModalVisible(false)}
-                style={styles.closeButton}
-              >
+              <TouchableOpacity onPress={() => setExpenseModalVisible(false)} style={styles.closeButton}>
                 <X size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            {/* Category Pill Selector */}
-            <Text style={styles.inputLabel}>CATEGORY</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-              <View style={styles.categoryPillRow}>
-                {categories.map((cat: any) => {
-                  const isSelected = (selectedCategoryId || categories[0]?.id) === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      onPress={() => setSelectedCategoryId(cat.id)}
-                      activeOpacity={0.8}
-                      style={[
-                        styles.categoryPill,
-                        isSelected && styles.categoryPillSelected,
-                      ]}
-                    >
-                      <Tag size={13} color={isSelected ? colors.primaryLight : colors.textTertiary} />
-                      <Text
-                        style={[
-                          styles.categoryPillText,
-                          isSelected && styles.categoryPillTextSelected,
-                        ]}
-                      >
-                        {cat.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
-
             <Text style={styles.inputLabel}>AMOUNT (€)</Text>
             <TextInput
-              value={amount}
-              onChangeText={setAmount}
+              value={expenseAmount}
+              onChangeText={setExpenseAmount}
               keyboardType="decimal-pad"
-              placeholder="25.50"
+              placeholder="45.50"
               placeholderTextColor={colors.textTertiary}
               style={styles.textInput}
             />
+
+            <Text style={styles.inputLabel}>CATEGORY</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {categories?.map((cat: any) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  onPress={() => setExpenseCategoryId(cat.id)}
+                  style={[
+                    styles.categoryPill,
+                    expenseCategoryId === cat.id && styles.categoryPillActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.categoryPillText,
+                      expenseCategoryId === cat.id && styles.categoryPillTextActive,
+                    ]}
+                  >
+                    {cat.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
 
             <Text style={styles.inputLabel}>DESCRIPTION</Text>
             <TextInput
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Groceries / Fuel / Dining"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
-
-            <Text style={styles.inputLabel}>MERCHANT (OPTIONAL)</Text>
-            <TextInput
-              value={merchant}
-              onChangeText={setMerchant}
-              placeholder="Albert Heijn / Shell"
+              value={expenseDescription}
+              onChangeText={setExpenseDescription}
+              placeholder="Groceries / Albert Heijn"
               placeholderTextColor={colors.textTertiary}
               style={styles.textInput}
             />
 
             <TouchableOpacity
-              onPress={handleAddExpense}
+              onPress={handleSaveExpense}
               disabled={createExpenseMutation.isPending}
               activeOpacity={0.85}
-              style={styles.saveExpenseButton}
+              style={styles.saveButton}
             >
               {createExpenseMutation.isPending ? (
                 <ActivityIndicator color={colors.textInverse} />
               ) : (
-                <Text style={styles.saveExpenseButtonText}>Record Expense</Text>
+                <Text style={styles.saveButtonText}>Record Expense</Text>
               )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
-      {/* Add Goal Modal */}
+      {/* Add Savings Goal Modal */}
       <Modal visible={goalModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
+        <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>New Savings Goal</Text>
-              <TouchableOpacity
-                onPress={() => setGoalModalVisible(false)}
-                style={styles.closeButton}
-              >
+              <TouchableOpacity onPress={() => setGoalModalVisible(false)} style={styles.closeButton}>
                 <X size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -373,34 +470,38 @@ export default function FinanceScreen() {
 
             <Text style={styles.inputLabel}>TARGET AMOUNT (€)</Text>
             <TextInput
-              value={goalTarget}
-              onChangeText={setGoalTarget}
+              value={goalTargetAmount}
+              onChangeText={setGoalTargetAmount}
               keyboardType="decimal-pad"
-              placeholder="5000"
+              placeholder="5000.00"
               placeholderTextColor={colors.textTertiary}
               style={styles.textInput}
             />
 
-            <Text style={styles.inputLabel}>CURRENT SAVED (€)</Text>
+            <Text style={styles.inputLabel}>INITIAL AMOUNT (€)</Text>
             <TextInput
-              value={goalCurrent}
-              onChangeText={setGoalCurrent}
+              value={goalCurrentAmount}
+              onChangeText={setGoalCurrentAmount}
               keyboardType="decimal-pad"
-              placeholder="1500"
+              placeholder="1500.00"
               placeholderTextColor={colors.textTertiary}
               style={styles.textInput}
             />
 
             <TouchableOpacity
-              onPress={handleAddGoal}
+              onPress={handleSaveGoal}
               disabled={createGoalMutation.isPending}
               activeOpacity={0.85}
-              style={styles.saveExpenseButton}
+              style={styles.saveButton}
             >
-              <Text style={styles.saveExpenseButtonText}>Create Goal</Text>
+              {createGoalMutation.isPending ? (
+                <ActivityIndicator color={colors.textInverse} />
+              ) : (
+                <Text style={styles.saveButtonText}>Create Goal</Text>
+              )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -423,7 +524,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   headerSubtitle: {
     color: colors.textSecondary,
@@ -440,91 +541,129 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 12,
-    gap: 6,
+    gap: 5,
   },
   addExpenseButtonText: {
     color: colors.textInverse,
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  tabSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 4,
+    marginBottom: 16,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 10,
+  },
+  tabButtonActive: {
+    backgroundColor: colors.cardElevated,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  tabButtonText: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  tabButtonTextActive: {
+    color: colors.primaryLight,
   },
 
-  // Savings Hero Card
-  savingsHeroCard: {
+  // Hero Card
+  heroCard: {
     backgroundColor: colors.card,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 22,
-    marginBottom: 20,
+    marginBottom: 16,
   },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionLabel: {
+  heroLabel: {
     color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
   },
-  savingsRateBadge: {
+  heroAmountText: {
+    color: colors.textPrimary,
+    fontSize: 32,
+    fontWeight: '900',
+    marginVertical: 6,
+    letterSpacing: -0.5,
+  },
+  savingsRateRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  savingsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.primaryBg,
     borderColor: 'rgba(16, 185, 129, 0.3)',
     borderWidth: 1,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
+    gap: 5,
   },
-  savingsRateText: {
+  savingsPillText: {
     color: colors.primaryLight,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
   },
-  netSavingsAmount: {
-    color: colors.textPrimary,
-    fontSize: 34,
-    fontWeight: '900',
-    letterSpacing: -0.5,
-    marginVertical: 10,
-  },
-  incomeExpenseGrid: {
+  incomeExpenseRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
+    gap: 12,
   },
-  incomeExpenseWell: {
+  subStatWell: {
     flex: 1,
     backgroundColor: colors.backgroundSecondary,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    borderRadius: 14,
     padding: 12,
   },
-  wellLabel: {
+  statIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 4,
+  },
+  statLabel: {
     color: colors.textTertiary,
     fontSize: 11,
     fontWeight: '600',
   },
   incomeValue: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 2,
+    color: colors.primaryLight,
+    fontSize: 16,
+    fontWeight: '800',
   },
   expenseValue: {
     color: colors.danger,
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 2,
+    fontSize: 16,
+    fontWeight: '800',
   },
 
-  // Savings Goals Section
-  sectionContainer: {
-    marginBottom: 20,
+  // Section Card
+  sectionCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 18,
+    marginBottom: 16,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -532,127 +671,135 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  iconHeadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   sectionTitle: {
     color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
+    marginBottom: 10,
   },
-  createGoalLink: {
-    color: colors.primaryLight,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  emptyGoalCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 24,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyGoalText: {
+  emptyText: {
     color: colors.textTertiary,
     fontSize: 13,
     fontWeight: '500',
+    marginVertical: 6,
   },
-  goalCard: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 16,
-    marginBottom: 10,
+
+  // Goals
+  goalRow: {
+    marginBottom: 14,
   },
-  goalCardTop: {
+  goalHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   goalName: {
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
   },
-  goalProgressPct: {
-    color: colors.primaryLight,
-    fontSize: 13,
-    fontWeight: '800',
+  goalAmount: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
   },
-  progressBarTrack: {
-    height: 6,
+  progressBarBg: {
+    height: 8,
     backgroundColor: colors.backgroundSecondary,
-    borderRadius: 3,
+    borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 8,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: colors.primary,
-    borderRadius: 3,
+    borderRadius: 4,
   },
-  goalCardBottom: {
+
+  // Expense List
+  expenseItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
   },
-  goalSavedAmount: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
+  expenseItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  goalTargetAmount: {
+  categoryIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.backgroundSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  expenseDesc: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  expenseCategorySub: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  expenseItemRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  expenseAmountText: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  // Forecast
+  forecastSub: {
     color: colors.textTertiary,
     fontSize: 12,
     fontWeight: '500',
-  },
-
-  // Forecast Card
-  forecastCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 20,
-  },
-  forecastSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
     marginTop: 4,
-    marginBottom: 14,
-    lineHeight: 16,
   },
-  forecastGrid: {
+  projectionRow: {
     flexDirection: 'row',
-    gap: 8,
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
   },
-  forecastCol: {
-    flex: 1,
-    backgroundColor: colors.backgroundSecondary,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    alignItems: 'center',
-  },
-  forecastMonth: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  forecastAmount: {
+  projectionMonth: {
     color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  projectionAmount: {
+    color: colors.primaryLight,
     fontSize: 14,
     fontWeight: '800',
-    marginTop: 4,
   },
 
-  // Modal Sheet
+  // Small add button
+  addSmallButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  addSmallButtonText: {
+    color: colors.textInverse,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -692,37 +839,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 6,
   },
-  categoryScroll: {
-    marginBottom: 14,
-  },
-  categoryPillRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  categoryPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 5,
-  },
-  categoryPillSelected: {
-    backgroundColor: colors.primaryBg,
-    borderColor: colors.primary,
-  },
-  categoryPillText: {
-    color: colors.textTertiary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  categoryPillTextSelected: {
-    color: colors.primaryLight,
-    fontWeight: '700',
-  },
   textInput: {
     backgroundColor: colors.backgroundSecondary,
     borderWidth: 1,
@@ -735,7 +851,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 14,
   },
-  saveExpenseButton: {
+  categoryPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginRight: 8,
+  },
+  categoryPillActive: {
+    backgroundColor: colors.primaryBg,
+    borderColor: colors.primary,
+  },
+  categoryPillText: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  categoryPillTextActive: {
+    color: colors.primaryLight,
+    fontWeight: '700',
+  },
+  saveButton: {
     backgroundColor: colors.primary,
     borderRadius: 14,
     height: 50,
@@ -743,7 +881,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 8,
   },
-  saveExpenseButtonText: {
+  saveButtonText: {
     color: colors.textInverse,
     fontSize: 15,
     fontWeight: '800',
