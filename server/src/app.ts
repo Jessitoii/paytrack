@@ -1,10 +1,13 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
 import { env } from './config/env.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { workRoutes } from './modules/work/work.routes.js';
 import { shiftsRoutes } from './modules/shifts/shifts.routes.js';
+import { payslipsRoutes } from './modules/payslips/payslips.routes.js';
+import { financeRoutes } from './modules/finance/finance.routes.js';
 
 export function buildApp() {
   const app = Fastify({
@@ -20,6 +23,12 @@ export function buildApp() {
     secret: env.JWT_SECRET,
   });
 
+  app.register(multipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10 MB max payslip PDF size
+    },
+  });
+
   // Health Endpoint
   app.get('/api/health', async () => {
     return {
@@ -33,6 +42,8 @@ export function buildApp() {
   app.register(authRoutes, { prefix: '/api/auth' });
   app.register(workRoutes, { prefix: '/api/work' });
   app.register(shiftsRoutes, { prefix: '/api/shifts' });
+  app.register(payslipsRoutes, { prefix: '/api/payslips' });
+  app.register(financeRoutes, { prefix: '/api/finance' });
 
   // Global Error Handler
   app.setErrorHandler((error: any, request, reply) => {
