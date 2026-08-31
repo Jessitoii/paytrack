@@ -1,213 +1,554 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  StyleSheet,
+  SafeAreaView,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+} from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Square, Coffee, Utensils, CheckCircle2, History, AlertCircle } from 'lucide-react-native';
+import {
+  Play,
+  Square,
+  Coffee,
+  Utensils,
+  Clock,
+  Coins,
+  History,
+  ShieldCheck,
+  CheckCircle2,
+} from 'lucide-react-native';
 import { api } from '../../src/services/api';
-import { formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
-import { roundFinishDateTo5Minutes } from '../../shared/time/rounding';
+import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
+import { colors } from '../../src/theme/colors';
 
-export default function WorkTrackingScreen() {
+export default function TrackWorkScreen() {
   const queryClient = useQueryClient();
-  const [selectedBreaks, setSelectedBreaks] = useState<Array<{ type: string; durationMinutes: number; isPaid: boolean; name: string }>>([
-    { type: 'PAID_15', durationMinutes: 15, isPaid: true, name: 'Paid coffee (15m)' },
-    { type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: 'Unpaid lunch (30m)' },
-  ]);
-  const [currentTime, setCurrentTime] = useState(new Date());
 
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const [hasPaid15, setHasPaid15] = useState(true);
+  const [hasUnpaid30, setHasUnpaid30] = useState(true);
 
-  const { data: workData, isLoading } = useQuery({
+  const { data: workData, isLoading, refetch } = useQuery({
     queryKey: ['workSessions'],
     queryFn: () => api.listWorkSessions(),
   });
 
   const activeSession = workData?.sessions?.find((s: any) => s.status === 'WORKING');
-  const pastSessions = workData?.sessions?.filter((s: any) => s.status === 'COMPLETED') || [];
+  const pastSessions = workData?.sessions?.filter((s: any) => s.status !== 'WORKING') || [];
 
   const startMutation = useMutation({
     mutationFn: () => api.startWork(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workSessions'] });
-      Alert.alert('Session Started', 'Your shift has been recorded.');
+      queryClient.invalidateQueries({ queryKey: ['overview'] });
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
   const finishMutation = useMutation({
-    mutationFn: (sessionId: string) =>
-      api.finishWork(sessionId, {
-        rawFinish: new Date(),
-        breaks: selectedBreaks,
-      }),
+    mutationFn: () => {
+      const breaks = [];
+      if (hasPaid15) {
+        breaks.push({ type: 'PAID_15', durationMinutes: 15, isPaid: true, name: '15m Paid Break' });
+      }
+      if (hasUnpaid30) {
+        breaks.push({ type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: '30m Unpaid Break' });
+      }
+      return api.finishWork(activeSession.id, { breaks });
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['workSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['overview'] });
       Alert.alert(
-        'Shift Completed',
-        `Rounded to ${formatTimeHHMM(data.session.roundedFinish)} (5-min upward ceiling)\nPaid Hours: ${formatMinutes(data.calculation.paidMinutes)}`
+        'Shift Finished',
+        `Rounded Finish: ${formatTimeHHMM(data.session.roundedFinish)}\nPaid Time: ${formatMinutes(data.calculation.paidMinutes)}`
       );
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
-  const toggleBreak = (type: string, duration: number, isPaid: boolean, name: string) => {
-    const exists = selectedBreaks.some((b) => b.type === type);
-    if (exists) {
-      setSelectedBreaks(selectedBreaks.filter((b) => b.type !== type));
-    } else {
-      setSelectedBreaks([...selectedBreaks, { type, durationMinutes: duration, isPaid, name }]);
-    }
-  };
-
-  const previewRoundedTime = roundFinishDateTo5Minutes(currentTime);
+  const totalPaidMinutesThisWeek =
+    workData?.sessions?.reduce((acc: number, s: any) => acc + (s.paidMinutes || 0), 0) || 0;
 
   return (
-    <ScrollView className="flex-1 bg-[#090D16]" contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}>
-      {/* Header */}
-      <View className="mb-6">
-        <Text className="text-gray-400 text-sm font-medium">Shift & Time Tracker</Text>
-        <Text className="text-white text-3xl font-extrabold">1-Tap Punch</Text>
-      </View>
-
-      {/* Main Punch Clock Card */}
-      <View className="bg-card border border-cardBorder rounded-3xl p-6 mb-6 items-center shadow-xl">
-        <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-1">Live Clock</Text>
-        <Text className="text-white text-5xl font-extrabold tracking-tight mb-2">
-          {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        </Text>
-
-        {activeSession ? (
-          <View className="items-center mt-2 mb-6">
-            <View className="bg-emerald-500/10 border border-emerald-500/30 px-3.5 py-1.5 rounded-full flex-row items-center">
-              <View className="w-2.5 h-2.5 rounded-full bg-emerald-400 mr-2" />
-              <Text className="text-emerald-400 text-xs font-bold">WORKING SINCE {formatTimeHHMM(activeSession.actualStart)}</Text>
-            </View>
-
-            {/* 5-minute upward rounding preview */}
-            <View className="bg-[#0B0F19] border border-gray-800 rounded-2xl p-4 mt-5 w-full">
-              <View className="flex-row justify-between items-center">
-                <Text className="text-gray-400 text-xs font-medium">Raw Finish</Text>
-                <Text className="text-gray-200 text-sm font-bold">{formatTimeHHMM(currentTime)}</Text>
-              </View>
-              <View className="h-px bg-gray-800 my-2" />
-              <View className="flex-row justify-between items-center">
-                <Text className="text-emerald-400 text-xs font-semibold">Rounded Finish (5-Min Ceiling)</Text>
-                <Text className="text-emerald-400 text-base font-extrabold">{formatTimeHHMM(previewRoundedTime)}</Text>
-              </View>
-            </View>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.contentContainer}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerSubtitle}>Real-Time Tracking</Text>
+            <Text style={styles.headerTitle}>Track Work</Text>
           </View>
-        ) : (
-          <Text className="text-gray-400 text-sm mt-1 mb-6">No shift currently active</Text>
-        )}
-
-        {/* Break Selector (when finishing) */}
-        {activeSession && (
-          <View className="w-full mb-6">
-            <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3">Shift Breaks Taken</Text>
-            <View className="flex-row gap-2">
-              <TouchableOpacity
-                onPress={() => toggleBreak('PAID_15', 15, true, 'Paid coffee (15m)')}
-                className={`flex-1 p-3.5 rounded-2xl border flex-row items-center justify-center ${
-                  selectedBreaks.some((b) => b.type === 'PAID_15')
-                    ? 'bg-emerald-500/20 border-emerald-500'
-                    : 'bg-[#0B0F19] border-gray-800'
-                }`}
-              >
-                <Coffee size={16} color={selectedBreaks.some((b) => b.type === 'PAID_15') ? '#10B981' : '#9CA3AF'} />
-                <Text className={`text-xs font-bold ml-2 ${selectedBreaks.some((b) => b.type === 'PAID_15') ? 'text-emerald-400' : 'text-gray-400'}`}>
-                  Paid 15m
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => toggleBreak('UNPAID_30', 30, false, 'Unpaid lunch (30m)')}
-                className={`flex-1 p-3.5 rounded-2xl border flex-row items-center justify-center ${
-                  selectedBreaks.some((b) => b.type === 'UNPAID_30')
-                    ? 'bg-emerald-500/20 border-emerald-500'
-                    : 'bg-[#0B0F19] border-gray-800'
-                }`}
-              >
-                <Utensils size={16} color={selectedBreaks.some((b) => b.type === 'UNPAID_30') ? '#10B981' : '#9CA3AF'} />
-                <Text className={`text-xs font-bold ml-2 ${selectedBreaks.some((b) => b.type === 'UNPAID_30') ? 'text-emerald-400' : 'text-gray-400'}`}>
-                  Lunch 30m
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.roundingBadge}>
+            <Text style={styles.roundingBadgeText}>5-Min Upward Rounding</Text>
           </View>
-        )}
-
-        {/* Big Tactile Punch Button */}
-        {activeSession ? (
-          <TouchableOpacity
-            onPress={() => finishMutation.mutate(activeSession.id)}
-            disabled={finishMutation.isPending}
-            className="w-full bg-rose-600 active:bg-rose-700 py-5 rounded-2xl items-center flex-row justify-center shadow-lg shadow-rose-600/30"
-          >
-            {finishMutation.isPending ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Square size={20} color="#FFFFFF" fill="#FFFFFF" />
-                <Text className="text-white text-base font-extrabold ml-2">FINISH WORK</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            onPress={() => startMutation.mutate()}
-            disabled={startMutation.isPending}
-            className="w-full bg-emerald-500 active:bg-emerald-600 py-5 rounded-2xl items-center flex-row justify-center shadow-lg shadow-emerald-500/30"
-          >
-            {startMutation.isPending ? (
-              <ActivityIndicator color="#090D16" />
-            ) : (
-              <>
-                <Play size={20} color="#090D16" fill="#090D16" />
-                <Text className="text-gray-950 text-base font-extrabold ml-2">START WORK</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Shift History Section */}
-      <View className="mt-2">
-        <View className="flex-row items-center justify-between mb-4">
-          <View className="flex-row items-center">
-            <History size={18} color="#9CA3AF" />
-            <Text className="text-white font-bold text-lg ml-2">Recent Shifts</Text>
-          </View>
-          <Text className="text-gray-500 text-xs">{pastSessions.length} completed</Text>
         </View>
 
-        {pastSessions.length === 0 ? (
-          <View className="bg-card border border-cardBorder rounded-2xl p-6 items-center">
-            <Text className="text-gray-500 text-sm">No completed shifts yet.</Text>
+        {/* 1. Main Work Status Hero Card */}
+        <View style={[styles.heroCard, activeSession && styles.heroCardActive]}>
+          <Text style={styles.statusLabel}>CURRENT STATUS</Text>
+          <Text style={[styles.statusTitle, activeSession && styles.statusTitleActive]}>
+            {activeSession ? 'SHIFT IN PROGRESS' : 'NOT WORKING'}
+          </Text>
+
+          {activeSession ? (
+            <View style={styles.activeTimeContainer}>
+              <Text style={styles.activeStartTimeLabel}>Started Timestamp</Text>
+              <Text style={styles.activeStartTimeValue}>
+                {formatTimeHHMM(activeSession.actualStart)}
+              </Text>
+              <Text style={styles.roundingNote}>
+                Finish time automatically rounds up to next 5-min ceiling
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.idleHint}>
+              Press below when you begin your shift to record exact start time.
+            </Text>
+          )}
+
+          {/* Break Selection Switches (Visible while working or configuring) */}
+          <View style={styles.breakControlsSection}>
+            <Text style={styles.breakSectionTitle}>SELECT SHIFT BREAKS</Text>
+            <View style={styles.breakButtonsRow}>
+              <TouchableOpacity
+                onPress={() => setHasPaid15(!hasPaid15)}
+                activeOpacity={0.8}
+                style={[styles.breakButton, hasPaid15 && styles.breakButtonActive]}
+              >
+                <Coffee size={16} color={hasPaid15 ? colors.primary : colors.textTertiary} />
+                <Text style={[styles.breakButtonText, hasPaid15 && styles.breakButtonTextActive]}>
+                  15m Paid Coffee
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setHasUnpaid30(!hasUnpaid30)}
+                activeOpacity={0.8}
+                style={[styles.breakButton, hasUnpaid30 && styles.breakButtonActive]}
+              >
+                <Utensils size={16} color={hasUnpaid30 ? colors.amber : colors.textTertiary} />
+                <Text style={[styles.breakButtonText, hasUnpaid30 && styles.breakButtonTextActiveAmber]}>
+                  30m Meal (Unpaid)
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : (
-          pastSessions.map((session: any) => (
-            <View key={session.id} className="bg-card border border-cardBorder rounded-2xl p-5 mb-3">
-              <View className="flex-row justify-between items-center mb-2">
-                <Text className="text-white font-bold text-base">{formatDateShort(session.actualStart)}</Text>
-                <View className="bg-emerald-500/10 px-2.5 py-1 rounded-lg">
-                  <Text className="text-emerald-400 font-extrabold text-xs">{formatMinutes(session.paidMinutes)}</Text>
+
+          {/* Big Action Button */}
+          {activeSession ? (
+            <TouchableOpacity
+              onPress={() => finishMutation.mutate()}
+              disabled={finishMutation.isPending}
+              activeOpacity={0.85}
+              style={styles.finishButton}
+            >
+              {finishMutation.isPending ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <View style={styles.buttonInnerRow}>
+                  <Square size={18} color="#FFF" fill="#FFF" />
+                  <Text style={styles.finishButtonText}>FINISH WORK (ROUND CEILING)</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={() => startMutation.mutate()}
+              disabled={startMutation.isPending}
+              activeOpacity={0.85}
+              style={styles.startButton}
+            >
+              {startMutation.isPending ? (
+                <ActivityIndicator color={colors.textInverse} />
+              ) : (
+                <View style={styles.buttonInnerRow}>
+                  <Play size={18} color={colors.textInverse} fill={colors.textInverse} />
+                  <Text style={styles.startButtonText}>START WORK SHIFT</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 2. Work Metrics Grid */}
+        <View style={styles.metricsGrid}>
+          <View style={styles.metricCard}>
+            <View style={styles.metricIconRow}>
+              <Clock size={16} color={colors.primary} />
+              <Text style={styles.metricLabel}>Total Worked</Text>
+            </View>
+            <Text style={styles.metricValue}>{formatMinutes(totalPaidMinutesThisWeek)}</Text>
+            <Text style={styles.metricSub}>This ISO week</Text>
+          </View>
+
+          <View style={styles.metricCard}>
+            <View style={styles.metricIconRow}>
+              <Coins size={16} color={colors.amber} />
+              <Text style={styles.metricLabel}>Est. Earnings</Text>
+            </View>
+            <Text style={styles.metricValue}>
+              {formatEUR((totalPaidMinutesThisWeek / 60) * 16.34)}
+            </Text>
+            <Text style={styles.metricSub}>Gross pay base</Text>
+          </View>
+        </View>
+
+        {/* 3. Recent Work History */}
+        <View style={styles.historySection}>
+          <View style={styles.historyHeaderRow}>
+            <History size={16} color={colors.textSecondary} />
+            <Text style={styles.historySectionTitle}>RECENT COMPLETED SESSIONS</Text>
+          </View>
+
+          {pastSessions.length === 0 ? (
+            <View style={styles.emptyHistoryCard}>
+              <Text style={styles.emptyHistoryText}>No completed work sessions recorded yet.</Text>
+            </View>
+          ) : (
+            pastSessions.slice(0, 5).map((session: any) => (
+              <View key={session.id} style={styles.sessionCard}>
+                <View style={styles.sessionCardHeader}>
+                  <Text style={styles.sessionDate}>{formatDateShort(session.actualStart)}</Text>
+                  <View style={styles.sessionPaidPill}>
+                    <CheckCircle2 size={12} color={colors.primary} />
+                    <Text style={styles.sessionPaidText}>
+                      {formatMinutes(session.paidMinutes || 0)} Paid
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.sessionDetailsRow}>
+                  <Text style={styles.sessionTimeSpan}>
+                    {formatTimeHHMM(session.actualStart)} →{' '}
+                    {session.roundedFinish ? formatTimeHHMM(session.roundedFinish) : '--:--'}
+                  </Text>
+                  <Text style={styles.sessionElapsed}>
+                    Elapsed: {formatMinutes(session.elapsedMinutes || 0)}
+                  </Text>
                 </View>
               </View>
-
-              <View className="flex-row justify-between items-center text-xs">
-                <Text className="text-gray-400 text-xs">
-                  {formatTimeHHMM(session.actualStart)} – {formatTimeHHMM(session.roundedFinish)} (raw {formatTimeHHMM(session.rawFinish)})
-                </Text>
-                <Text className="text-gray-500 text-xs">
-                  {session.breaks?.length || 0} breaks
-                </Text>
-              </View>
-            </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  container: {
+    flex: 1,
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 24 : 12,
+    paddingBottom: 36,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  headerSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  headerTitle: {
+    color: colors.textPrimary,
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  roundingBadge: {
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  roundingBadgeText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Hero Card
+  heroCard: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 22,
+    marginBottom: 18,
+  },
+  heroCardActive: {
+    borderColor: colors.primary,
+    backgroundColor: 'rgba(6, 78, 59, 0.35)',
+  },
+  statusLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  statusTitle: {
+    color: colors.textPrimary,
+    fontSize: 24,
+    fontWeight: '900',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  statusTitleActive: {
+    color: colors.primaryLight,
+  },
+  activeTimeContainer: {
+    marginVertical: 10,
+  },
+  activeStartTimeLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  activeStartTimeValue: {
+    color: colors.textPrimary,
+    fontSize: 32,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    marginTop: 2,
+  },
+  roundingNote: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  idleHint: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+    marginVertical: 8,
+    lineHeight: 18,
+  },
+
+  // Break Controls
+  breakControlsSection: {
+    marginVertical: 14,
+  },
+  breakSectionTitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  breakButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  breakButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.backgroundSecondary,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    gap: 6,
+  },
+  breakButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryBg,
+  },
+  breakButtonText: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  breakButtonTextActive: {
+    color: colors.primaryLight,
+    fontWeight: '700',
+  },
+  breakButtonTextActiveAmber: {
+    color: colors.amber,
+    fontWeight: '700',
+  },
+
+  // Action Buttons
+  startButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 16,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  buttonInnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  startButtonText: {
+    color: colors.textInverse,
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  finishButton: {
+    backgroundColor: colors.danger,
+    borderRadius: 16,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    shadowColor: colors.danger,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  finishButtonText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+
+  // Metrics Grid
+  metricsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 16,
+  },
+  metricIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  metricLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metricValue: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  metricSub: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+
+  // History Section
+  historySection: {
+    marginTop: 4,
+  },
+  historyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+  },
+  historySectionTitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  emptyHistoryCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 20,
+    alignItems: 'center',
+  },
+  emptyHistoryText: {
+    color: colors.textTertiary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  sessionCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 16,
+    marginBottom: 10,
+  },
+  sessionCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  sessionDate: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  sessionPaidPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryBg,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 4,
+  },
+  sessionPaidText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sessionDetailsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sessionTimeSpan: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sessionElapsed: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+});

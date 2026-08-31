@@ -1,6 +1,8 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { LayoutDashboard, Clock, Calendar, FileText, Wallet } from 'lucide-react-native';
+import { colors } from '../../src/theme/colors';
+import { Platform } from 'react-native';
 
 export default function TabsLayout() {
   return (
@@ -8,17 +10,19 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#0F172A',
-          borderTopColor: '#1E293B',
-          height: 64,
-          paddingBottom: 8,
+          backgroundColor: colors.card,
+          borderTopColor: colors.cardBorder,
+          borderTopWidth: 1,
+          height: Platform.OS === 'android' ? 68 : 84,
+          paddingBottom: Platform.OS === 'android' ? 10 : 24,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: '#10B981', // Fintech Emerald
-        tabBarInactiveTintColor: '#64748B',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textTertiary,
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
+          fontSize: 11,
+          fontWeight: '700',
+          marginTop: 2,
         },
       }}
     >
@@ -26,35 +30,35 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => <LayoutDashboard size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <LayoutDashboard size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="work"
         options={{
           title: 'Track Work',
-          tabBarIcon: ({ color, size }) => <Clock size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Clock size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="shifts"
         options={{
           title: 'Shifts',
-          tabBarIcon: ({ color, size }) => <Calendar size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Calendar size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="payslips"
         options={{
           title: 'Payslips',
-          tabBarIcon: ({ color, size }) => <FileText size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <FileText size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="finance"
         options={{
           title: 'Finance',
-          tabBarIcon: ({ color, size }) => <Wallet size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Wallet size={22} color={color} />,
         }}
       />
     </Tabs>

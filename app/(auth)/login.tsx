@@ -1,8 +1,21 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { Lock, Mail, ShieldCheck } from 'lucide-react-native';
+import { colors } from '../../src/theme/colors';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -20,7 +33,7 @@ export default function LoginScreen() {
     try {
       setIsSubmitting(true);
       await login(email.trim(), password);
-      router.replace('/(tabs)');
+      router.replace('/(tabs)' as any);
     } catch (err: any) {
       Alert.alert('Login Failed', err.message || 'Invalid credentials');
     } finally {
@@ -29,67 +42,187 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#090D16] justify-center p-6">
-      {/* Brand Header */}
-      <View className="items-center mb-8">
-        <View className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 items-center justify-center mb-4">
-          <ShieldCheck size={36} color="#10B981" />
-        </View>
-        <Text className="text-white text-3xl font-extrabold tracking-tight">PayTrack</Text>
-        <Text className="text-gray-400 text-xs text-center mt-1">
-          Smart Payroll Tracker & Personal Finance for Shift Workers
-        </Text>
-      </View>
-
-      {/* Form Card */}
-      <View className="bg-card border border-cardBorder rounded-3xl p-6 shadow-xl mb-6">
-        <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Email Address</Text>
-        <View className="flex-row items-center bg-[#0B0F19] border border-gray-800 rounded-xl px-4 py-3 mb-4">
-          <Mail size={18} color="#64748B" />
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder="worker@example.com"
-            placeholderTextColor="#64748B"
-            className="flex-1 text-white text-base ml-3"
-          />
-        </View>
-
-        <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Password</Text>
-        <View className="flex-row items-center bg-[#0B0F19] border border-gray-800 rounded-xl px-4 py-3 mb-6">
-          <Lock size={18} color="#64748B" />
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            placeholder="••••••••"
-            placeholderTextColor="#64748B"
-            className="flex-1 text-white text-base ml-3"
-          />
-        </View>
-
-        <TouchableOpacity
-          onPress={handleLogin}
-          disabled={isSubmitting}
-          className="bg-emerald-500 active:bg-emerald-600 py-4 rounded-xl items-center flex-row justify-center shadow-lg shadow-emerald-500/20"
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
         >
-          {isSubmitting ? (
-            <ActivityIndicator color="#090D16" />
-          ) : (
-            <Text className="text-gray-950 font-bold text-base">Sign In</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          {/* Brand Header */}
+          <View style={styles.brandContainer}>
+            <View style={styles.iconBadge}>
+              <ShieldCheck size={38} color={colors.primary} />
+            </View>
+            <Text style={styles.brandTitle}>PayTrack</Text>
+            <Text style={styles.brandSubtitle}>
+              Smart Payroll Tracker & Personal Finance
+            </Text>
+            <View style={styles.employerPill}>
+              <Text style={styles.employerPillText}>Albert Heijn Bleiswijk • Carrière</Text>
+            </View>
+          </View>
 
-      {/* Switch to Register */}
-      <View className="flex-row justify-center items-center">
-        <Text className="text-gray-400 text-xs">Don't have an account? </Text>
-        <TouchableOpacity onPress={() => router.push('/(auth)/register' as any)}>
-          <Text className="text-emerald-400 font-bold text-xs">Create Account</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          {/* Form Card */}
+          <View style={styles.card}>
+            <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+            <View style={styles.inputWrapper}>
+              <Mail size={18} color={colors.textSecondary} />
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="worker@example.com"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
+            </View>
+
+            <Text style={styles.inputLabel}>PASSWORD</Text>
+            <View style={styles.inputWrapper}>
+              <Lock size={18} color={colors.textSecondary} />
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                placeholder="••••••••"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
+            </View>
+
+            <TouchableOpacity
+              onPress={handleLogin}
+              disabled={isSubmitting}
+              activeOpacity={0.8}
+              style={styles.submitButton}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color={colors.textInverse} />
+              ) : (
+                <Text style={styles.submitButtonText}>Sign In to PayTrack</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  keyboardView: {
+    flex: 1,
+  },
+  scrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+  },
+  brandContainer: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  iconBadge: {
+    width: 68,
+    height: 68,
+    borderRadius: 20,
+    backgroundColor: colors.primaryBg,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  brandTitle: {
+    color: colors.textPrimary,
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  brandSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  employerPill: {
+    marginTop: 12,
+    backgroundColor: colors.cardElevated,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  employerPillText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  inputLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    height: 52,
+    marginBottom: 18,
+  },
+  textInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '500',
+    marginLeft: 12,
+    height: '100%',
+  },
+  submitButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  submitButtonText: {
+    color: colors.textInverse,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+});

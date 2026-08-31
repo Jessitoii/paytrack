@@ -5,7 +5,8 @@ import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { colors } from '../src/theme/colors';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,8 +38,8 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <View className="flex-1 bg-[#090D16] items-center justify-center">
-        <ActivityIndicator size="large" color="#10B981" />
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -53,9 +54,8 @@ export default function RootLayout() {
         <AuthProvider>
           <StatusBar style="light" />
           <NavigationGuard>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#090D16' } }}>
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
               <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
-              <Stack.Screen name="(auth)/register" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             </Stack>
           </NavigationGuard>
@@ -64,3 +64,12 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

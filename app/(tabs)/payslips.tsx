@@ -1,37 +1,54 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  Alert,
+  StyleSheet,
+  SafeAreaView,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+} from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileUp, FileText, CheckCircle, Scale, ShieldAlert, X } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import {
+  FileText,
+  Upload,
+  CheckCircle,
+  Clock,
+  Sparkles,
+  ArrowRight,
+  ShieldCheck,
+  X,
+  FileCheck2,
+} from 'lucide-react-native';
 import { api } from '../../src/services/api';
 import { formatEUR, formatDateShort } from '../../src/lib/formatters';
+import { colors } from '../../src/theme/colors';
 
 export default function PayslipsScreen() {
   const queryClient = useQueryClient();
-  const [reconciliationModal, setReconciliationModal] = useState<any>(null);
+  const [reconcileModalVisible, setReconcileModalVisible] = useState(false);
+  const [reconcileData, setReconcileData] = useState<any>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
 
-  const { data: payslipsData, isLoading } = useQuery({
+  const { data: payslipsData, isLoading, refetch } = useQuery({
     queryKey: ['payslips'],
     queryFn: () => api.listPayslips(),
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (file: DocumentPicker.DocumentPickerAsset) => {
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      return api.uploadPayslip({
-        fileBase64: base64,
-        fileName: file.name,
-      });
-    },
-    onSuccess: (data) => {
+    mutationFn: (payload: { fileBase64: string; fileName: string }) =>
+      api.uploadPayslip(payload),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['payslips'] });
       Alert.alert(
-        'Payslip Uploaded & Parsed',
-        `Week ${data.extractedData.payrollPeriod.weekNumber} extracted successfully.\nGross: ${formatEUR(data.extractedData.totals.totalGross)}\nNet Bank Payout: ${formatEUR(data.extractedData.totals.bankPayment)}`
+        'Payslip Parsed Successfully',
+        `Week ${res.extractedData?.payrollPeriod?.weekNumber || ''} parsed with ${res.extractedData?.totals?.totalGross ? formatEUR(res.extractedData.totals.totalGross) : ''} gross pay.`
       );
     },
     onError: (err: any) => Alert.alert('Upload Error', err.message),
@@ -44,147 +61,524 @@ export default function PayslipsScreen() {
         copyToCacheDirectory: true,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        uploadMutation.mutate(result.assets[0]);
-      }
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const file = result.assets[0];
+      const base64 = await FileSystem.readAsStringAsync(file.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      uploadMutation.mutate({
+        fileBase64: base64,
+        fileName: file.name,
+      });
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      Alert.alert('File Picker Error', err.message);
     }
   };
 
-  const handleReconcile = async (payslipId: string) => {
+  const handleOpenReconcile = async (payslipId: string) => {
     try {
-      const data = await api.reconcilePayslip(payslipId);
-      setReconciliationModal(data);
+      setIsReconciling(true);
+      const res = await api.reconcilePayslip(payslipId);
+      setReconcileData(res);
+      setReconcileModalVisible(true);
     } catch (err: any) {
       Alert.alert('Reconciliation Error', err.message);
+    } finally {
+      setIsReconciling(false);
     }
   };
 
+  const payslips = payslipsData?.payslips || [];
+
   return (
-    <View className="flex-1 bg-[#090D16]">
-      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         {/* Header */}
-        <View className="flex-row justify-between items-center mb-6">
+        <View style={styles.header}>
           <View>
-            <Text className="text-gray-400 text-sm font-medium">Payroll Documents</Text>
-            <Text className="text-white text-3xl font-extrabold">Payslips & AI</Text>
+            <Text style={styles.headerSubtitle}>Official Statements</Text>
+            <Text style={styles.headerTitle}>Payslips & AI</Text>
+          </View>
+          <View style={styles.aiBadge}>
+            <Sparkles size={14} color={colors.primaryLight} />
+            <Text style={styles.aiBadgeText}>AI Reconciliation</Text>
           </View>
         </View>
 
-        {/* Upload Card */}
+        {/* 1. Upload Payslip Box */}
         <TouchableOpacity
           onPress={handlePickDocument}
           disabled={uploadMutation.isPending}
-          className="bg-card border-2 border-dashed border-emerald-500/40 rounded-3xl p-8 items-center mb-6 shadow-lg shadow-emerald-500/10"
+          activeOpacity={0.8}
+          style={styles.uploadCard}
         >
-          {uploadMutation.isPending ? (
-            <ActivityIndicator size="large" color="#10B981" />
-          ) : (
-            <>
-              <View className="w-16 h-16 rounded-2xl bg-emerald-500/10 items-center justify-center mb-4">
-                <FileUp size={32} color="#10B981" />
-              </View>
-              <Text className="text-white text-lg font-bold">Upload Dutch Payslip PDF</Text>
-              <Text className="text-gray-400 text-xs text-center mt-1">
-                AI extracts hours, gross, ADV, holiday allowance, StiPP, and bank payout automatically.
-              </Text>
-              <View className="bg-emerald-500 px-5 py-2.5 rounded-xl mt-4">
-                <Text className="text-gray-950 font-bold text-xs">CHOOSE PDF FILE</Text>
-              </View>
-            </>
+          <View style={styles.uploadIconWrapper}>
+            <Upload size={24} color={colors.primary} />
+          </View>
+          <Text style={styles.uploadTitle}>
+            {uploadMutation.isPending ? 'Analyzing PDF with AI...' : 'Upload Official Payslip (PDF)'}
+          </Text>
+          <Text style={styles.uploadSubtitle}>
+            Extract wages, deductions, allowances, and verify bank payments
+          </Text>
+
+          {uploadMutation.isPending && (
+            <ActivityIndicator color={colors.primary} style={{ marginTop: 10 }} />
           )}
         </TouchableOpacity>
 
-        {/* Payslips History List */}
-        <View>
-          <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3">Confirmed Payslips</Text>
-          {payslipsData?.payslips?.length === 0 ? (
-            <View className="bg-card border border-cardBorder rounded-2xl p-6 items-center">
-              <Text className="text-gray-500 text-sm">No payslips uploaded yet.</Text>
-            </View>
-          ) : (
-            payslipsData?.payslips?.map((payslip: any) => (
-              <View key={payslip.id} className="bg-card border border-cardBorder rounded-2xl p-5 mb-3">
-                <View className="flex-row justify-between items-center mb-3">
-                  <View className="flex-row items-center">
-                    <FileText size={20} color="#10B981" />
-                    <Text className="text-white font-bold text-base ml-2">
-                      Week {payslip.payrollWeek?.weekNumber ?? '–'}
-                    </Text>
-                  </View>
-                  <View className="bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex-row items-center">
-                    <CheckCircle size={12} color="#10B981" />
-                    <Text className="text-emerald-400 font-bold text-xs ml-1">{payslip.parsingStatus}</Text>
-                  </View>
-                </View>
-
-                <View className="flex-row justify-between items-baseline mb-4">
-                  <View>
-                    <Text className="text-gray-500 text-xs">Gross Pay</Text>
-                    <Text className="text-gray-300 text-sm font-semibold mt-0.5">{formatEUR(payslip.totalGross)}</Text>
-                  </View>
-                  <View>
-                    <Text className="text-gray-500 text-xs">Bank Payout</Text>
-                    <Text className="text-emerald-400 text-xl font-extrabold mt-0.5">{formatEUR(payslip.bankPayment)}</Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  onPress={() => handleReconcile(payslip.id)}
-                  className="bg-[#0B0F19] border border-gray-800 py-2.5 rounded-xl flex-row items-center justify-center"
-                >
-                  <Scale size={16} color="#9CA3AF" />
-                  <Text className="text-gray-300 font-bold text-xs ml-1.5">Compare vs Calculated Estimate</Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
+        {/* 2. Payslips Document List */}
+        <View style={styles.sectionHeaderRow}>
+          <FileText size={16} color={colors.textSecondary} />
+          <Text style={styles.sectionTitle}>CONFIRMED STATEMENTS</Text>
         </View>
-      </ScrollView>
 
-      {/* Reconciliation Modal */}
-      <Modal visible={!!reconciliationModal} animationType="slide" transparent>
-        <View className="flex-1 bg-black/80 justify-end">
-          <View className="bg-card border-t border-cardBorder rounded-t-3xl p-6">
-            <View className="flex-row justify-between items-center mb-4">
-              <Text className="text-white text-xl font-bold">Week {reconciliationModal?.weekNumber} Reconciliation</Text>
-              <TouchableOpacity onPress={() => setReconciliationModal(null)}>
-                <X size={20} color="#9CA3AF" />
-              </TouchableOpacity>
-            </View>
-
-            {reconciliationModal?.variance ? (
-              <View className="bg-[#0B0F19] border border-gray-800 rounded-2xl p-4 mb-4">
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-gray-400 text-xs">Actual Bank Payout</Text>
-                  <Text className="text-emerald-400 font-extrabold text-base">{formatEUR(reconciliationModal.actual.bankPayment)}</Text>
+        {isLoading ? (
+          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 30 }} />
+        ) : payslips.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <FileCheck2 size={36} color={colors.textTertiary} />
+            <Text style={styles.emptyTitle}>No Payslips Uploaded</Text>
+            <Text style={styles.emptySubtitle}>
+              Upload your Carrière / Albert Heijn payslip PDF above to audit your payroll.
+            </Text>
+          </View>
+        ) : (
+          payslips.map((ps: any) => (
+            <View key={ps.id} style={styles.documentCard}>
+              <View style={styles.docCardTop}>
+                <View>
+                  <Text style={styles.docPeriodTitle}>
+                    {formatDateShort(ps.periodStart)} – {formatDateShort(ps.periodEnd)}
+                  </Text>
+                  <Text style={styles.docFileName}>{ps.fileName}</Text>
                 </View>
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-gray-400 text-xs">Calculated Estimate</Text>
-                  <Text className="text-gray-300 font-bold text-base">{formatEUR(reconciliationModal.estimate?.bankPayment)}</Text>
-                </View>
-                <View className="h-px bg-gray-800 my-2" />
-                <View className="flex-row justify-between items-center">
-                  <Text className="text-gray-400 text-xs font-semibold">Variance</Text>
-                  <Text className={`font-extrabold text-sm ${reconciliationModal.variance.isMatch ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {formatEUR(reconciliationModal.variance.bankPaymentDifference)} ({reconciliationModal.variance.isMatch ? 'Match' : 'Difference'})
+                <View
+                  style={[
+                    styles.statusPill,
+                    ps.parsingStatus === 'CONFIRMED'
+                      ? styles.statusPillConfirmed
+                      : styles.statusPillParsed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      ps.parsingStatus === 'CONFIRMED'
+                        ? styles.statusTextConfirmed
+                        : styles.statusTextParsed,
+                    ]}
+                  >
+                    {ps.parsingStatus}
                   </Text>
                 </View>
               </View>
-            ) : (
-              <Text className="text-gray-400 text-sm mb-4">No estimate found for this week to compare.</Text>
-            )}
 
-            <TouchableOpacity
-              onPress={() => setReconciliationModal(null)}
-              className="bg-emerald-500 py-3.5 rounded-xl items-center"
-            >
-              <Text className="text-gray-950 font-bold text-sm">Close</Text>
-            </TouchableOpacity>
+              <View style={styles.docDivider} />
+
+              <View style={styles.docFinancialGrid}>
+                <View style={styles.financialCol}>
+                  <Text style={styles.finLabel}>Total Gross</Text>
+                  <Text style={styles.finValue}>{formatEUR(ps.totalGross)}</Text>
+                </View>
+                <View style={styles.financialCol}>
+                  <Text style={styles.finLabel}>Total Net</Text>
+                  <Text style={styles.finValue}>{formatEUR(ps.totalNet)}</Text>
+                </View>
+                <View style={styles.financialCol}>
+                  <Text style={styles.finLabel}>Bank Payment</Text>
+                  <Text style={styles.finBankValue}>{formatEUR(ps.bankPayment)}</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => handleOpenReconcile(ps.id)}
+                activeOpacity={0.8}
+                style={styles.reconcileButton}
+              >
+                <Text style={styles.reconcileButtonText}>Audit & Reconcile Calculation</Text>
+                <ArrowRight size={14} color={colors.primaryLight} />
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+      </ScrollView>
+
+      {/* Reconciliation Breakdown Modal */}
+      <Modal visible={reconcileModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Payroll Reconciliation</Text>
+                <Text style={styles.modalSubtitle}>Estimated vs. Official Payslip</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setReconcileModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <X size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {reconcileData ? (
+              <ScrollView style={{ maxHeight: 400 }}>
+                <View style={styles.reconcileMatchCard}>
+                  <ShieldCheck size={20} color={colors.primary} />
+                  <Text style={styles.reconcileMatchText}>
+                    Status:{' '}
+                    {reconcileData.reconciliation?.matchStatus === 'EXACT_MATCH'
+                      ? '100% Exact Match Verified'
+                      : 'Reconciliation Verified with Minor Estimates'}
+                  </Text>
+                </View>
+
+                <View style={styles.lineItemTable}>
+                  <View style={styles.tableHeaderRow}>
+                    <Text style={[styles.tableCol, { flex: 2, color: colors.textSecondary }]}>
+                      Component
+                    </Text>
+                    <Text
+                      style={[
+                        styles.tableCol,
+                        { flex: 1, textAlign: 'right', color: colors.textSecondary },
+                      ]}
+                    >
+                      Estimate
+                    </Text>
+                    <Text
+                      style={[
+                        styles.tableCol,
+                        { flex: 1, textAlign: 'right', color: colors.textSecondary },
+                      ]}
+                    >
+                      Actual
+                    </Text>
+                  </View>
+
+                  {reconcileData.reconciliation?.lineItems?.map((item: any, idx: number) => (
+                    <View key={idx} style={styles.tableRow}>
+                      <Text style={[styles.tableCol, { flex: 2, color: colors.textPrimary }]}>
+                        {item.name}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.tableCol,
+                          { flex: 1, textAlign: 'right', color: colors.textSecondary },
+                        ]}
+                      >
+                        {formatEUR(item.estimatedAmount)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.tableCol,
+                          { flex: 1, textAlign: 'right', color: colors.primaryLight, fontWeight: '700' },
+                        ]}
+                      >
+                        {formatEUR(item.actualAmount)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            ) : (
+              <ActivityIndicator color={colors.primary} />
+            )}
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  container: {
+    flex: 1,
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 24 : 12,
+    paddingBottom: 36,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  headerSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  headerTitle: {
+    color: colors.textPrimary,
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  aiBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 5,
+  },
+  aiBadgeText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Upload Box
+  uploadCard: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+    borderStyle: 'dashed',
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  uploadIconWrapper: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.primaryBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  uploadTitle: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  uploadSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 16,
+  },
+
+  // Document List
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  emptyCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 36,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  emptyTitle: {
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+
+  // Document Card
+  documentCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 18,
+    marginBottom: 14,
+  },
+  docCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  docPeriodTitle: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  docFileName: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  statusPill: {
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statusPillConfirmed: {
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  statusPillParsed: {
+    backgroundColor: colors.blueBg,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  statusTextConfirmed: {
+    color: colors.primaryLight,
+  },
+  statusTextParsed: {
+    color: colors.blue,
+  },
+  docDivider: {
+    height: 1,
+    backgroundColor: colors.cardBorder,
+    marginVertical: 12,
+  },
+  docFinancialGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  financialCol: {
+    flex: 1,
+  },
+  finLabel: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  finValue: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  finBankValue: {
+    color: colors.primaryLight,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  reconcileButton: {
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  reconcileButtonText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.cardElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reconcileMatchCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 8,
+    marginBottom: 14,
+  },
+  reconcileMatchText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  lineItemTable: {
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 6,
+  },
+  tableCol: {
+    fontSize: 12,
+  },
+});

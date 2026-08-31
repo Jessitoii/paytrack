@@ -1,9 +1,33 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Modal,
+  Alert,
+  StyleSheet,
+  SafeAreaView,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+} from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Wallet, Plus, TrendingUp, Target, Tag, DollarSign, X } from 'lucide-react-native';
+import {
+  Wallet,
+  Plus,
+  TrendingUp,
+  Target,
+  Tag,
+  X,
+  PiggyBank,
+  CheckCircle,
+} from 'lucide-react-native';
 import { api } from '../../src/services/api';
 import { formatEUR } from '../../src/lib/formatters';
+import { colors } from '../../src/theme/colors';
 
 export default function FinanceScreen() {
   const queryClient = useQueryClient();
@@ -24,14 +48,9 @@ export default function FinanceScreen() {
     queryFn: () => api.getCategories(),
   });
 
-  const { data: overviewData } = useQuery({
+  const { data: overviewData, isLoading: overviewLoading } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.getOverview(),
-  });
-
-  const { data: expensesData } = useQuery({
-    queryKey: ['expenses'],
-    queryFn: () => api.listExpenses(),
   });
 
   const { data: goalsData } = useQuery({
@@ -55,8 +74,7 @@ export default function FinanceScreen() {
       setAmount('');
       setDescription('');
       setMerchant('');
-      setSelectedCategoryId('');
-      Alert.alert('Expense Added', 'Your expense has been saved.');
+      Alert.alert('Expense Recorded', 'Your expense has been saved.');
     },
     onError: (err: any) => Alert.alert('Error', err.message),
   });
@@ -120,143 +138,161 @@ export default function FinanceScreen() {
   const overview = overviewData?.overview;
 
   return (
-    <View className="flex-1 bg-[#090D16]">
-      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         {/* Header */}
-        <View className="flex-row justify-between items-center mb-6">
+        <View style={styles.header}>
           <View>
-            <Text className="text-gray-400 text-sm font-medium">Wealth & Savings</Text>
-            <Text className="text-white text-3xl font-extrabold">Finance Engine</Text>
+            <Text style={styles.headerSubtitle}>Wealth & Savings</Text>
+            <Text style={styles.headerTitle}>Finance Engine</Text>
           </View>
           <TouchableOpacity
             onPress={handleOpenAddExpense}
-            className="bg-emerald-500 w-11 h-11 rounded-2xl items-center justify-center shadow-lg shadow-emerald-500/20"
+            activeOpacity={0.8}
+            style={styles.addExpenseButton}
           >
-            <Plus size={22} color="#090D16" />
+            <Plus size={18} color={colors.textInverse} />
+            <Text style={styles.addExpenseButtonText}>Add Expense</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Big Savings Overview Card */}
-        <View className="bg-card border border-cardBorder rounded-3xl p-6 mb-6 shadow-xl">
-          <View className="flex-row justify-between items-center mb-2">
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Monthly Net Savings</Text>
-            <View className="bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-full">
-              <Text className="text-emerald-400 font-extrabold text-xs">
+        {/* 1. Big Monthly Net Savings Hero Card */}
+        <View style={styles.savingsHeroCard}>
+          <View style={styles.cardHeaderRow}>
+            <Text style={styles.sectionLabel}>MONTHLY NET SAVINGS</Text>
+            <View style={styles.savingsRateBadge}>
+              <Text style={styles.savingsRateText}>
                 {overview?.savings?.savingsRatePercentage ?? 0}% SAVINGS RATE
               </Text>
             </View>
           </View>
 
-          <Text className="text-white text-4xl font-extrabold mb-4">
+          <Text style={styles.netSavingsAmount}>
             {formatEUR(overview?.savings?.monthlySavings ?? 0)}
           </Text>
 
-          <View className="flex-row gap-3">
-            <View className="flex-1 bg-[#0B0F19] border border-gray-800 rounded-2xl p-3.5">
-              <Text className="text-gray-500 text-xs">Total Income</Text>
-              <Text className="text-gray-200 text-base font-bold mt-0.5">
+          <View style={styles.incomeExpenseGrid}>
+            <View style={styles.incomeExpenseWell}>
+              <Text style={styles.wellLabel}>Total Income (Earned)</Text>
+              <Text style={styles.incomeValue}>
                 {formatEUR(overview?.income?.actual ?? 0)}
               </Text>
             </View>
-
-            <View className="flex-1 bg-[#0B0F19] border border-gray-800 rounded-2xl p-3.5">
-              <Text className="text-gray-500 text-xs">Total Expenses</Text>
-              <Text className="text-rose-400 text-base font-bold mt-0.5">
+            <View style={styles.incomeExpenseWell}>
+              <Text style={styles.wellLabel}>Total Expenses (Spent)</Text>
+              <Text style={styles.expenseValue}>
                 {formatEUR(overview?.expenses?.total ?? 0)}
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Savings Goals Section */}
-        <View className="mb-6">
-          <View className="flex-row justify-between items-center mb-3">
-            <View className="flex-row items-center">
-              <Target size={18} color="#10B981" />
-              <Text className="text-white font-bold text-lg ml-2">Savings Goals</Text>
+        {/* 2. Savings Goals Section */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.iconHeadingRow}>
+              <Target size={18} color={colors.primary} />
+              <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>SAVINGS GOALS</Text>
             </View>
-            <TouchableOpacity onPress={() => setGoalModalVisible(true)}>
-              <Text className="text-emerald-400 text-xs font-bold">+ New Goal</Text>
+            <TouchableOpacity onPress={() => setGoalModalVisible(true)} activeOpacity={0.7}>
+              <Text style={styles.createGoalLink}>+ New Goal</Text>
             </TouchableOpacity>
           </View>
 
           {goalsData?.goals?.length === 0 ? (
-            <View className="bg-card border border-cardBorder rounded-2xl p-5 items-center">
-              <Text className="text-gray-500 text-sm">No savings goals created yet.</Text>
+            <View style={styles.emptyGoalCard}>
+              <PiggyBank size={32} color={colors.textTertiary} />
+              <Text style={styles.emptyGoalText}>No savings goals set yet.</Text>
             </View>
           ) : (
             goalsData?.goals?.map((goal: any) => (
-              <View key={goal.id} className="bg-card border border-cardBorder rounded-2xl p-5 mb-3">
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-white font-bold text-base">{goal.name}</Text>
-                  <Text className="text-emerald-400 font-extrabold text-sm">{goal.progressPercentage}%</Text>
+              <View key={goal.id} style={styles.goalCard}>
+                <View style={styles.goalCardTop}>
+                  <Text style={styles.goalName}>{goal.name}</Text>
+                  <Text style={styles.goalProgressPct}>{goal.progressPercentage}%</Text>
                 </View>
 
                 {/* Progress Bar */}
-                <View className="w-full h-2.5 bg-gray-800 rounded-full overflow-hidden mb-2">
+                <View style={styles.progressBarTrack}>
                   <View
-                    className="h-full bg-emerald-500 rounded-full"
-                    style={{ width: `${Math.min(100, goal.progressPercentage)}%` }}
+                    style={[
+                      styles.progressBarFill,
+                      { width: `${Math.min(100, goal.progressPercentage)}%` },
+                    ]}
                   />
                 </View>
 
-                <View className="flex-row justify-between text-xs">
-                  <Text className="text-gray-400 text-xs">{formatEUR(goal.currentAmount)} saved</Text>
-                  <Text className="text-gray-500 text-xs">Target: {formatEUR(goal.targetAmount)}</Text>
+                <View style={styles.goalCardBottom}>
+                  <Text style={styles.goalSavedAmount}>{formatEUR(goal.currentAmount)} saved</Text>
+                  <Text style={styles.goalTargetAmount}>Target: {formatEUR(goal.targetAmount)}</Text>
                 </View>
               </View>
             ))
           )}
         </View>
 
-        {/* 6-Month Projection Forecast */}
-        <View className="bg-card border border-cardBorder rounded-3xl p-6">
-          <View className="flex-row items-center mb-3">
-            <TrendingUp size={18} color="#3B82F6" />
-            <Text className="text-white font-bold text-lg ml-2">6-Month Savings Forecast</Text>
+        {/* 3. 6-Month Projected Wealth Forecast */}
+        <View style={styles.forecastCard}>
+          <View style={styles.iconHeadingRow}>
+            <TrendingUp size={18} color={colors.blue} />
+            <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>6-MONTH WEALTH PROJECTION</Text>
           </View>
-          <Text className="text-gray-400 text-xs mb-4">
-            Projected cumulative savings based on current income and recurring expenses.
+          <Text style={styles.forecastSubtitle}>
+            Estimated cumulative savings based on steady shifts and recurring costs.
           </Text>
 
-          <View className="flex-row justify-between">
+          <View style={styles.forecastGrid}>
             {forecastData?.forecast?.projections?.slice(0, 3).map((p: any) => (
-              <View key={p.monthIndex} className="bg-[#0B0F19] border border-gray-800 rounded-2xl p-3.5 flex-1 mx-1 items-center">
-                <Text className="text-gray-500 text-xs">Month +{p.monthIndex}</Text>
-                <Text className="text-white font-extrabold text-sm mt-1">{formatEUR(p.projectedSavings)}</Text>
+              <View key={p.monthIndex} style={styles.forecastCol}>
+                <Text style={styles.forecastMonth}>Month +{p.monthIndex}</Text>
+                <Text style={styles.forecastAmount}>{formatEUR(p.projectedSavings)}</Text>
               </View>
             ))}
           </View>
         </View>
       </ScrollView>
 
-      {/* Add Expense Modal with Dynamic Category Picker */}
+      {/* Add Expense Modal with Dynamic Category Selector */}
       <Modal visible={expenseModalVisible} animationType="slide" transparent>
-        <View className="flex-1 bg-black/80 justify-end">
-          <View className="bg-card border-t border-cardBorder rounded-t-3xl p-6">
-            <View className="flex-row justify-between items-center mb-6">
-              <Text className="text-white text-xl font-bold">Add New Expense</Text>
-              <TouchableOpacity onPress={() => setExpenseModalVisible(false)}>
-                <X size={20} color="#9CA3AF" />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Expense</Text>
+              <TouchableOpacity
+                onPress={() => setExpenseModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <X size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            {/* Category Selector */}
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Select Category</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
-              <View className="flex-row gap-2">
+            {/* Category Pill Selector */}
+            <Text style={styles.inputLabel}>CATEGORY</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+              <View style={styles.categoryPillRow}>
                 {categories.map((cat: any) => {
                   const isSelected = (selectedCategoryId || categories[0]?.id) === cat.id;
                   return (
                     <TouchableOpacity
                       key={cat.id}
                       onPress={() => setSelectedCategoryId(cat.id)}
-                      className={`px-4 py-2.5 rounded-xl border flex-row items-center ${
-                        isSelected ? 'bg-emerald-500/20 border-emerald-500' : 'bg-[#0B0F19] border-gray-800'
-                      }`}
+                      activeOpacity={0.8}
+                      style={[
+                        styles.categoryPill,
+                        isSelected && styles.categoryPillSelected,
+                      ]}
                     >
-                      <Tag size={14} color={isSelected ? '#10B981' : '#9CA3AF'} />
-                      <Text className={`text-xs font-bold ml-1.5 ${isSelected ? 'text-emerald-400' : 'text-gray-400'}`}>
+                      <Tag size={13} color={isSelected ? colors.primaryLight : colors.textTertiary} />
+                      <Text
+                        style={[
+                          styles.categoryPillText,
+                          isSelected && styles.categoryPillTextSelected,
+                        ]}
+                      >
                         {cat.name}
                       </Text>
                     </TouchableOpacity>
@@ -265,99 +301,451 @@ export default function FinanceScreen() {
               </View>
             </ScrollView>
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Amount (€)</Text>
+            <Text style={styles.inputLabel}>AMOUNT (€)</Text>
             <TextInput
               value={amount}
               onChangeText={setAmount}
               keyboardType="decimal-pad"
               placeholder="25.50"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-lg font-bold mb-4"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Description</Text>
+            <Text style={styles.inputLabel}>DESCRIPTION</Text>
             <TextInput
               value={description}
               onChangeText={setDescription}
               placeholder="Groceries / Fuel / Dining"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-4"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Merchant (Optional)</Text>
+            <Text style={styles.inputLabel}>MERCHANT (OPTIONAL)</Text>
             <TextInput
               value={merchant}
               onChangeText={setMerchant}
               placeholder="Albert Heijn / Shell"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-6"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
             <TouchableOpacity
               onPress={handleAddExpense}
               disabled={createExpenseMutation.isPending}
-              className="bg-emerald-500 py-4 rounded-xl items-center"
+              activeOpacity={0.85}
+              style={styles.saveExpenseButton}
             >
               {createExpenseMutation.isPending ? (
-                <ActivityIndicator color="#090D16" />
+                <ActivityIndicator color={colors.textInverse} />
               ) : (
-                <Text className="text-gray-950 font-bold text-base">Save Expense</Text>
+                <Text style={styles.saveExpenseButtonText}>Record Expense</Text>
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Add Goal Modal */}
       <Modal visible={goalModalVisible} animationType="slide" transparent>
-        <View className="flex-1 bg-black/80 justify-end">
-          <View className="bg-card border-t border-cardBorder rounded-t-3xl p-6">
-            <View className="flex-row justify-between items-center mb-6">
-              <Text className="text-white text-xl font-bold">New Savings Goal</Text>
-              <TouchableOpacity onPress={() => setGoalModalVisible(false)}>
-                <X size={20} color="#9CA3AF" />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Savings Goal</Text>
+              <TouchableOpacity
+                onPress={() => setGoalModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <X size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Goal Name</Text>
+            <Text style={styles.inputLabel}>GOAL NAME</Text>
             <TextInput
               value={goalName}
               onChangeText={setGoalName}
-              placeholder="e.g. Emergency Fund / Holiday"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-4"
+              placeholder="Emergency Fund / Vacation"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Target Amount (€)</Text>
+            <Text style={styles.inputLabel}>TARGET AMOUNT (€)</Text>
             <TextInput
               value={goalTarget}
               onChangeText={setGoalTarget}
               keyboardType="decimal-pad"
               placeholder="5000"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-lg font-bold mb-4"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
-            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Current Saved (€)</Text>
+            <Text style={styles.inputLabel}>CURRENT SAVED (€)</Text>
             <TextInput
               value={goalCurrent}
               onChangeText={setGoalCurrent}
               keyboardType="decimal-pad"
-              placeholder="1000"
-              placeholderTextColor="#64748B"
-              className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-6"
+              placeholder="1500"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
             />
 
             <TouchableOpacity
               onPress={handleAddGoal}
               disabled={createGoalMutation.isPending}
-              className="bg-emerald-500 py-4 rounded-xl items-center"
+              activeOpacity={0.85}
+              style={styles.saveExpenseButton}
             >
-              <Text className="text-gray-950 font-bold text-base">Create Goal</Text>
+              <Text style={styles.saveExpenseButtonText}>Create Goal</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  container: {
+    flex: 1,
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 24 : 12,
+    paddingBottom: 36,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  headerSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  headerTitle: {
+    color: colors.textPrimary,
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  addExpenseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 6,
+  },
+  addExpenseButtonText: {
+    color: colors.textInverse,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  // Savings Hero Card
+  savingsHeroCard: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 22,
+    marginBottom: 20,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  savingsRateBadge: {
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  savingsRateText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  netSavingsAmount: {
+    color: colors.textPrimary,
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    marginVertical: 10,
+  },
+  incomeExpenseGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  incomeExpenseWell: {
+    flex: 1,
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 14,
+    padding: 12,
+  },
+  wellLabel: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  incomeValue: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  expenseValue: {
+    color: colors.danger,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+
+  // Savings Goals Section
+  sectionContainer: {
+    marginBottom: 20,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  iconHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  createGoalLink: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyGoalCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyGoalText: {
+    color: colors.textTertiary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  goalCard: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 16,
+    marginBottom: 10,
+  },
+  goalCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  goalName: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  goalProgressPct: {
+    color: colors.primaryLight,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  progressBarTrack: {
+    height: 6,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: 3,
+  },
+  goalCardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  goalSavedAmount: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  goalTargetAmount: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+
+  // Forecast Card
+  forecastCard: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 20,
+  },
+  forecastSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  forecastGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  forecastCol: {
+    flex: 1,
+    backgroundColor: colors.backgroundSecondary,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  forecastMonth: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  forecastAmount: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+
+  // Modal Sheet
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.cardElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  categoryScroll: {
+    marginBottom: 14,
+  },
+  categoryPillRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  categoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundSecondary,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 5,
+  },
+  categoryPillSelected: {
+    backgroundColor: colors.primaryBg,
+    borderColor: colors.primary,
+  },
+  categoryPillText: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  categoryPillTextSelected: {
+    color: colors.primaryLight,
+    fontWeight: '700',
+  },
+  textInput: {
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 14,
+  },
+  saveExpenseButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  saveExpenseButtonText: {
+    color: colors.textInverse,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+});
