@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Database files
+*.db
+*.db-journal
+dev.db
+dev.db-journal
+
+# Build and runtime outputs
+dist/
+dist-ssr/
+build/
+.next/
+.expo/
+*.tsbuildinfo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
