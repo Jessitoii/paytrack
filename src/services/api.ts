@@ -1,6 +1,22 @@
 import { secureStorage } from './storage.js';
+import Constants from 'expo-constants';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:3000/api';
+function getBaseUrl(): string {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  // Derive PC host IP automatically from Metro bundler host in development
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const host = hostUri.split(':')[0];
+    return `http://${host}:3000/api`;
+  }
+
+  return 'http://127.0.0.1:3000/api';
+}
+
+const BASE_URL = getBaseUrl();
 
 let activeAuthToken: string | null = null;
 
