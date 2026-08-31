@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -30,22 +30,13 @@ import {
   financeRepository,
   userRepository,
 } from '../../src/database';
+import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
-
-  // Local Auto-Start Reconciliation on Mount
-  useEffect(() => {
-    workRepository.reconcileAutoStart().then((res) => {
-      if (res.autoStartedCount > 0) {
-        queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
-        queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
-      }
-    }).catch(() => {});
-  }, []);
 
   const { data: profile } = useQuery({
     queryKey: ['localUserProfile'],
@@ -66,6 +57,17 @@ export default function DashboardScreen() {
     queryKey: ['localFinanceOverview'],
     queryFn: () => financeRepository.getMonthlyOverview(),
   });
+
+  const onRefresh = useCallback(() => {
+    workRepository.reconcileAutoStart().finally(() => {
+      refetchWork();
+      refetchShifts();
+      refetchFinance();
+    });
+  }, [refetchWork, refetchShifts, refetchFinance]);
+
+  // Reactive DB refresh on change events + tab focus
+  useDatabaseRefresh(['work_changed', 'shifts_changed', 'finance_changed'], onRefresh);
 
   const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
   const completedSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
@@ -96,16 +98,8 @@ export default function DashboardScreen() {
     (s: any) => s.date.substring(0, 10) === todayStr
   );
   const nextShift = shifts?.find(
-    (s: any) => s.date.substring(0, 10) >= todayStr
+    (s: any) => s.date.substring(0, 10) >= todayStr && (!s.isDayOff && s.shiftType !== 'OFF')
   );
-
-  const onRefresh = () => {
-    workRepository.reconcileAutoStart().finally(() => {
-      refetchWork();
-      refetchShifts();
-      refetchFinance();
-    });
-  };
 
   // Time-based greeting
   const currentHour = new Date().getHours();
@@ -190,7 +184,7 @@ export default function DashboardScreen() {
                 <Text style={styles.readyTitle}>Ready for Work?</Text>
                 <Text style={styles.readySubtitle}>
                   {todayShift && !todayShift.isDayOff
-                    ? `Auto-starts at ${todayShift.plannedStart ? formatTimeHHMM(todayShift.plannedStart) : 'shift time'}`
+                    ? `Auto-starts at ${todayShift.expectedActualStart ? formatTimeHHMM(todayShift.expectedActualStart) : todayShift.plannedStart ? formatTimeHHMM(todayShift.plannedStart) : 'shift time'}`
                     : '1-Tap start timestamp recording'}
                 </Text>
               </View>
@@ -257,6 +251,7 @@ export default function DashboardScreen() {
                 <Text style={styles.varianceColValue}>
                   {todayShift.plannedStart ? formatTimeHHMM(todayShift.plannedStart) : '--'} →{' '}
                   {todayShift.plannedEnd ? formatTimeHHMM(todayShift.plannedEnd) : '--'}
+                  {todayShift.startAdjustmentMinutes > 0 ? ` (+${todayShift.startAdjustmentMinutes}m)` : ''}
                 </Text>
               </View>
               <View style={styles.varianceCol}>
@@ -322,7 +317,7 @@ export default function DashboardScreen() {
                 <Text style={styles.shiftTitle}>{nextShift.shiftType} Shift</Text>
                 <Text style={styles.shiftTimeSubtitle}>
                   {formatDateShort(nextShift.date)} •{' '}
-                  {nextShift.plannedStart ? formatTimeHHMM(nextShift.plannedStart) : ''}
+                  {nextShift.expectedActualStart ? formatTimeHHMM(nextShift.expectedActualStart) : nextShift.plannedStart ? formatTimeHHMM(nextShift.plannedStart) : ''}
                   {nextShift.plannedEnd ? ` – ${formatTimeHHMM(nextShift.plannedEnd)}` : ''}
                 </Text>
               </View>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -27,8 +27,10 @@ import {
   Moon,
   Coffee,
   CheckCircle2,
+  Clock,
 } from 'lucide-react-native';
 import { shiftRepository } from '../../src/database';
+import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters';
 import { getCalendarMonthGrid, getMonthYearTitle } from '../../src/lib/calendar';
 import { colors } from '../../src/theme/colors';
@@ -59,6 +61,8 @@ export default function ShiftsScreen() {
   const [editStart, setEditStart] = useState('14:30');
   const [editEnd, setEditEnd] = useState('23:00');
   const [editIsOff, setEditIsOff] = useState(false);
+  const [editAdjMinutes, setEditAdjMinutes] = useState(0);
+  const [customAdjInput, setCustomAdjInput] = useState('');
   const [editNotes, setEditNotes] = useState('');
 
   // Bulk Week State (Monday to Sunday)
@@ -69,21 +73,21 @@ export default function ShiftsScreen() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
 
-  const [bulkShifts, setBulkShifts] = useState<Array<{ type: string; isOff: boolean }>>([
-    { type: 'AFTERNOON', isOff: false }, // Mon
-    { type: 'AFTERNOON', isOff: false }, // Tue
-    { type: 'AFTERNOON', isOff: false }, // Wed
-    { type: 'AFTERNOON', isOff: false }, // Thu
-    { type: 'AFTERNOON', isOff: false }, // Fri
-    { type: 'OFF', isOff: true },        // Sat
-    { type: 'OFF', isOff: true },        // Sun
+  const [bulkShifts, setBulkShifts] = useState<Array<{ type: string; isOff: boolean; adjMinutes: number }>>([
+    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 }, // Mon
+    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 }, // Tue
+    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 }, // Wed
+    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 }, // Thu
+    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 }, // Fri
+    { type: 'OFF', isOff: true, adjMinutes: 0 },        // Sat
+    { type: 'OFF', isOff: true, adjMinutes: 0 },        // Sun
   ]);
 
-  // Query shifts for current month window (including previous & next month margins)
+  // Query shifts for current month window
   const queryStartDate = `${currentYear}-${String(currentMonthIndex === 0 ? 12 : currentMonthIndex).padStart(2, '0')}-01`;
   const queryEndDate = `${currentYear}-${String(currentMonthIndex === 11 ? 1 : currentMonthIndex + 2).padStart(2, '0')}-28`;
 
-  const { data: shifts } = useQuery({
+  const { data: shifts, refetch: refetchShifts } = useQuery({
     queryKey: ['localShifts', currentYear, currentMonthIndex],
     queryFn: () =>
       shiftRepository.listShifts({
@@ -91,6 +95,9 @@ export default function ShiftsScreen() {
         endDate: queryEndDate,
       }),
   });
+
+  // DB Reactivity on database change + tab focus
+  useDatabaseRefresh(['shifts_changed'], refetchShifts);
 
   // Mutations
   const saveShiftMutation = useMutation({
@@ -168,6 +175,9 @@ export default function ShiftsScreen() {
       setEditIsOff(Boolean(existing.isDayOff));
       setEditStart(existing.plannedStart ? formatTimeHHMM(existing.plannedStart) : '14:30');
       setEditEnd(existing.plannedEnd ? formatTimeHHMM(existing.plannedEnd) : '23:00');
+      const adj = existing.startAdjustmentMinutes || 0;
+      setEditAdjMinutes(adj);
+      setCustomAdjInput(adj > 0 && adj !== 15 && adj !== 30 ? String(adj) : '');
       setEditNotes(existing.notes || '');
     } else {
       setEditShiftId(null);
@@ -175,10 +185,22 @@ export default function ShiftsScreen() {
       setEditIsOff(false);
       setEditStart('14:30');
       setEditEnd('23:00');
+      setEditAdjMinutes(0);
+      setCustomAdjInput('');
       setEditNotes('');
     }
 
     setDayModalVisible(true);
+  };
+
+  // Compute Expected Actual Start Time
+  const computeExpectedStart = (startStr: string, adjMins: number) => {
+    const [sh, sm] = startStr.split(':').map(Number);
+    if (isNaN(sh) || isNaN(sm)) return startStr;
+    const totalMins = sh * 60 + sm + adjMins;
+    const hh = String(Math.floor((totalMins % (24 * 60)) / 60)).padStart(2, '0');
+    const mm = String(totalMins % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
   };
 
   // Save Day Shift
@@ -188,6 +210,7 @@ export default function ShiftsScreen() {
 
     let plannedStart: Date | null = null;
     let plannedEnd: Date | null = null;
+    let expectedActualStart: Date | null = null;
 
     if (!editIsOff && editType !== 'OFF') {
       const [sh, sm] = editStart.split(':').map(Number);
@@ -202,6 +225,13 @@ export default function ShiftsScreen() {
       if (eh < sh) {
         plannedEnd.setDate(plannedEnd.getDate() + 1);
       }
+
+      if (editAdjMinutes > 0) {
+        expectedActualStart = new Date(plannedStart);
+        expectedActualStart.setMinutes(expectedActualStart.getMinutes() + editAdjMinutes);
+      } else {
+        expectedActualStart = plannedStart;
+      }
     }
 
     saveShiftMutation.mutate({
@@ -210,6 +240,8 @@ export default function ShiftsScreen() {
       shiftType: editType,
       plannedStart,
       plannedEnd,
+      startAdjustmentMinutes: editAdjMinutes,
+      expectedActualStart,
       isDayOff: editIsOff || editType === 'OFF',
       notes: editNotes || undefined,
     });
@@ -227,6 +259,7 @@ export default function ShiftsScreen() {
 
       let plannedStart: Date | null = null;
       let plannedEnd: Date | null = null;
+      let expectedActualStart: Date | null = null;
 
       if (!item.isOff && item.type !== 'OFF') {
         const preset = SHIFT_PRESETS.find((p) => p.type === item.type) || SHIFT_PRESETS[1];
@@ -239,6 +272,13 @@ export default function ShiftsScreen() {
         plannedEnd = new Date(shiftDate);
         plannedEnd.setHours(eh, em, 0, 0);
         if (eh < sh) plannedEnd.setDate(plannedEnd.getDate() + 1);
+
+        if (item.adjMinutes > 0) {
+          expectedActualStart = new Date(plannedStart);
+          expectedActualStart.setMinutes(expectedActualStart.getMinutes() + item.adjMinutes);
+        } else {
+          expectedActualStart = plannedStart;
+        }
       }
 
       return {
@@ -246,6 +286,8 @@ export default function ShiftsScreen() {
         shiftType: item.type,
         plannedStart,
         plannedEnd,
+        startAdjustmentMinutes: item.adjMinutes,
+        expectedActualStart,
         isDayOff: item.isOff || item.type === 'OFF',
       };
     });
@@ -364,6 +406,7 @@ export default function ShiftsScreen() {
                           : shift.shiftType === 'NIGHT'
                           ? 'NIGHT'
                           : 'OFF'}
+                        {shift.startAdjustmentMinutes > 0 ? ` +${shift.startAdjustmentMinutes}m` : ''}
                       </Text>
                     </View>
                   )}
@@ -407,67 +450,147 @@ export default function ShiftsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Shift Preset Toggles */}
-            <Text style={styles.inputLabel}>SELECT SHIFT TYPE</Text>
-            <View style={styles.presetsGrid}>
-              {SHIFT_PRESETS.map((preset) => {
-                const IconComp = preset.icon;
-                const isSelected = editType === preset.type;
-                return (
-                  <TouchableOpacity
-                    key={preset.type}
-                    onPress={() => {
-                      setEditType(preset.type);
-                      setEditIsOff(preset.isOff);
-                      if (!preset.isOff) {
-                        setEditStart(preset.start);
-                        setEditEnd(preset.end);
-                      }
-                    }}
-                    style={[styles.presetCard, isSelected && styles.presetCardSelected]}
-                  >
-                    <IconComp
-                      size={18}
-                      color={isSelected ? preset.color : colors.textTertiary}
-                    />
-                    <Text
-                      style={[styles.presetCardText, isSelected && { color: colors.textPrimary }]}
+            <ScrollView style={{ maxHeight: 420 }}>
+              {/* Shift Preset Toggles */}
+              <Text style={styles.inputLabel}>SELECT SHIFT TYPE</Text>
+              <View style={styles.presetsGrid}>
+                {SHIFT_PRESETS.map((preset) => {
+                  const IconComp = preset.icon;
+                  const isSelected = editType === preset.type;
+                  return (
+                    <TouchableOpacity
+                      key={preset.type}
+                      onPress={() => {
+                        setEditType(preset.type);
+                        setEditIsOff(preset.isOff);
+                        if (!preset.isOff) {
+                          setEditStart(preset.start);
+                          setEditEnd(preset.end);
+                        }
+                      }}
+                      style={[styles.presetCard, isSelected && styles.presetCardSelected]}
                     >
-                      {preset.label}
-                    </Text>
-                    {preset.start ? (
-                      <Text style={styles.presetTimeText}>{preset.start}</Text>
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Custom Hours (if not Day OFF) */}
-            {!editIsOff && editType !== 'OFF' && (
-              <View style={styles.timeInputsRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>START (HH:MM)</Text>
-                  <TextInput
-                    value={editStart}
-                    onChangeText={setEditStart}
-                    placeholder="14:30"
-                    placeholderTextColor={colors.textTertiary}
-                    style={styles.textInput}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>FINISH (HH:MM)</Text>
-                  <TextInput
-                    value={editEnd}
-                    onChangeText={setEditEnd}
-                    placeholder="23:00"
-                    placeholderTextColor={colors.textTertiary}
-                    style={styles.textInput}
-                  />
-                </View>
+                      <IconComp
+                        size={18}
+                        color={isSelected ? preset.color : colors.textTertiary}
+                      />
+                      <Text
+                        style={[styles.presetCardText, isSelected && { color: colors.textPrimary }]}
+                      >
+                        {preset.label}
+                      </Text>
+                      {preset.start ? (
+                        <Text style={styles.presetTimeText}>{preset.start}</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-            )}
+
+              {/* Custom Hours (if not Day OFF) */}
+              {!editIsOff && editType !== 'OFF' && (
+                <>
+                  <View style={styles.timeInputsRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputLabel}>PLANNED START (HH:MM)</Text>
+                      <TextInput
+                        value={editStart}
+                        onChangeText={setEditStart}
+                        placeholder="14:30"
+                        placeholderTextColor={colors.textTertiary}
+                        style={styles.textInput}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputLabel}>PLANNED FINISH (HH:MM)</Text>
+                      <TextInput
+                        value={editEnd}
+                        onChangeText={setEditEnd}
+                        placeholder="23:00"
+                        placeholderTextColor={colors.textTertiary}
+                        style={styles.textInput}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Start Adjustment Options */}
+                  <Text style={styles.inputLabel}>START TIME ADJUSTMENT (LATE START)</Text>
+                  <View style={styles.adjOptionsRow}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditAdjMinutes(0);
+                        setCustomAdjInput('');
+                      }}
+                      style={[styles.adjOptionPill, editAdjMinutes === 0 && styles.adjOptionPillActive]}
+                    >
+                      <Text style={[styles.adjOptionText, editAdjMinutes === 0 && styles.adjOptionTextActive]}>
+                        On Time (0m)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditAdjMinutes(15);
+                        setCustomAdjInput('');
+                      }}
+                      style={[styles.adjOptionPill, editAdjMinutes === 15 && styles.adjOptionPillActive]}
+                    >
+                      <Text style={[styles.adjOptionText, editAdjMinutes === 15 && styles.adjOptionTextActive]}>
+                        +15 min
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditAdjMinutes(30);
+                        setCustomAdjInput('');
+                      }}
+                      style={[styles.adjOptionPill, editAdjMinutes === 30 && styles.adjOptionPillActive]}
+                    >
+                      <Text style={[styles.adjOptionText, editAdjMinutes === 30 && styles.adjOptionTextActive]}>
+                        +30 min
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Custom adjustment input if needed */}
+                  <View style={styles.customAdjRow}>
+                    <TextInput
+                      value={customAdjInput}
+                      onChangeText={(val) => {
+                        setCustomAdjInput(val);
+                        const n = parseInt(val, 10);
+                        if (!isNaN(n) && n >= 0) setEditAdjMinutes(n);
+                      }}
+                      placeholder="Custom late start (e.g. +20 min)"
+                      keyboardType="numeric"
+                      placeholderTextColor={colors.textTertiary}
+                      style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
+                    />
+                  </View>
+
+                  {/* Adjustment Summary Box */}
+                  <View style={styles.adjSummaryBox}>
+                    <View style={styles.adjSummaryRow}>
+                      <Text style={styles.adjSummaryLabel}>Original Planned:</Text>
+                      <Text style={styles.adjSummaryVal}>{editStart} → {editEnd}</Text>
+                    </View>
+                    <View style={styles.adjSummaryRow}>
+                      <Text style={styles.adjSummaryLabel}>Adjustment:</Text>
+                      <Text style={[styles.adjSummaryVal, { color: editAdjMinutes > 0 ? colors.amber : colors.textPrimary }]}>
+                        {editAdjMinutes > 0 ? `+${editAdjMinutes} min late` : 'On time'}
+                      </Text>
+                    </View>
+                    <View style={styles.adjSummaryRow}>
+                      <Text style={styles.adjSummaryLabel}>Expected Auto-Start:</Text>
+                      <Text style={[styles.adjSummaryVal, { color: colors.primaryLight, fontWeight: '800' }]}>
+                        {computeExpectedStart(editStart, editAdjMinutes)}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              )}
+            </ScrollView>
 
             {/* Action Buttons */}
             <View style={styles.modalActionsRow}>
@@ -530,13 +653,13 @@ export default function ShiftsScreen() {
               <TouchableOpacity
                 onPress={() =>
                   setBulkShifts([
-                    { type: 'AFTERNOON', isOff: false },
-                    { type: 'AFTERNOON', isOff: false },
-                    { type: 'AFTERNOON', isOff: false },
-                    { type: 'AFTERNOON', isOff: false },
-                    { type: 'AFTERNOON', isOff: false },
-                    { type: 'OFF', isOff: true },
-                    { type: 'OFF', isOff: true },
+                    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 },
+                    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 },
+                    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 },
+                    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 },
+                    { type: 'AFTERNOON', isOff: false, adjMinutes: 0 },
+                    { type: 'OFF', isOff: true, adjMinutes: 0 },
+                    { type: 'OFF', isOff: true, adjMinutes: 0 },
                   ])
                 }
                 style={styles.monFriButton}
@@ -548,7 +671,7 @@ export default function ShiftsScreen() {
             {/* 7-Day Quick Selector List */}
             <ScrollView style={{ maxHeight: 280, marginVertical: 8 }}>
               {DAYS_OF_WEEK.map((dayName, idx) => {
-                const item = bulkShifts[idx] || { type: 'OFF', isOff: true };
+                const item = bulkShifts[idx] || { type: 'OFF', isOff: true, adjMinutes: 0 };
                 return (
                   <View key={dayName} style={styles.bulkDayRow}>
                     <Text style={styles.bulkDayName}>{dayName}</Text>
@@ -558,7 +681,7 @@ export default function ShiftsScreen() {
                           key={t}
                           onPress={() => {
                             const copy = [...bulkShifts];
-                            copy[idx] = { type: t, isOff: t === 'OFF' };
+                            copy[idx] = { type: t, isOff: t === 'OFF', adjMinutes: copy[idx]?.adjMinutes || 0 };
                             setBulkShifts(copy);
                           }}
                           style={[
@@ -743,7 +866,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   shiftPillText: {
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: '800',
   },
 
@@ -785,17 +908,18 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     borderTopWidth: 1,
     borderTopColor: colors.cardBorder,
-    padding: 24,
+    padding: 22,
+    maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   modalTitle: {
     color: colors.textPrimary,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '800',
   },
   modalSubtitle: {
@@ -816,12 +940,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   presetsGrid: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   presetCard: {
     flex: 1,
@@ -829,7 +953,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
     borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
     gap: 4,
   },
@@ -849,8 +973,8 @@ const styles = StyleSheet.create({
   },
   timeInputsRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
+    gap: 10,
+    marginBottom: 12,
   },
   textInput: {
     backgroundColor: colors.backgroundSecondary,
@@ -862,11 +986,68 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
+    marginBottom: 12,
   },
+
+  // Adjustment Controls
+  adjOptionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  adjOptionPill: {
+    flex: 1,
+    backgroundColor: colors.backgroundSecondary,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  adjOptionPillActive: {
+    backgroundColor: colors.primaryBg,
+    borderColor: colors.primary,
+  },
+  adjOptionText: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  adjOptionTextActive: {
+    color: colors.primaryLight,
+  },
+  customAdjRow: {
+    marginBottom: 12,
+  },
+  adjSummaryBox: {
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
+    marginBottom: 14,
+    gap: 4,
+  },
+  adjSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  adjSummaryLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  adjSummaryVal: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
   modalActionsRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 6,
+    marginTop: 8,
   },
   deleteButton: {
     width: 50,

@@ -7,10 +7,24 @@ import { CREATE_TABLES_SQL, SCHEMA_VERSION } from './schema';
 export async function initializeDatabase(): Promise<void> {
   const db = getDatabase();
 
-  // 1. Create tables
+  // 1. Create tables if they do not exist
   await db.execRaw(CREATE_TABLES_SQL);
 
-  // 2. Check and update schema version
+  // 2. Incremental column additions (graceful ALTER TABLE)
+  try {
+    await db.execute('ALTER TABLE shifts ADD COLUMN startAdjustmentMinutes INTEGER NOT NULL DEFAULT 0;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE shifts ADD COLUMN expectedActualStart TEXT;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE work_breaks ADD COLUMN startTime TEXT;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE work_breaks ADD COLUMN endTime TEXT;');
+  } catch (_) {}
+
+  // 3. Check and update schema version
   const versionRow = await db.queryFirst<{ user_version: number }>('PRAGMA user_version;');
   const currentVersion = versionRow?.user_version ?? 0;
 
@@ -18,7 +32,7 @@ export async function initializeDatabase(): Promise<void> {
     await db.execRaw(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
-  // 3. Seed Default User Profile (if not existing)
+  // 4. Seed Default User Profile (if not existing)
   const existingUser = await db.queryFirst('SELECT id FROM user_profile LIMIT 1;');
   if (!existingUser) {
     const now = new Date().toISOString();
@@ -116,7 +130,7 @@ export async function initializeDatabase(): Promise<void> {
     );
   }
 
-  // 4. Seed Default Expense Categories (if empty)
+  // 5. Seed Default Expense Categories (if empty)
   const existingCat = await db.queryFirst('SELECT id FROM expense_categories LIMIT 1;');
   if (!existingCat) {
     const now = new Date().toISOString();

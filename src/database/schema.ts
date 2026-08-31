@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const CREATE_TABLES_SQL = `
 -- 1. User Profile & Settings
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS shifts (
   shiftType TEXT NOT NULL,
   plannedStart TEXT,
   plannedEnd TEXT,
+  startAdjustmentMinutes INTEGER NOT NULL DEFAULT 0,
+  expectedActualStart TEXT,
   isDayOff INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   createdAt TEXT NOT NULL,
@@ -102,6 +104,8 @@ CREATE TABLE IF NOT EXISTS work_breaks (
   durationMinutes INTEGER NOT NULL,
   isPaid INTEGER NOT NULL,
   name TEXT,
+  startTime TEXT,
+  endTime TEXT,
   createdAt TEXT NOT NULL,
   FOREIGN KEY (workSessionId) REFERENCES work_sessions (id) ON DELETE CASCADE
 );

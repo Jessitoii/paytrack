@@ -164,7 +164,7 @@ describe('PayTrack Local SQLite Database & Repository Engine Tests', () => {
 
   it('creates JSON backup and atomically restores database from backup', async () => {
     const backup = await exportDatabaseToJson();
-    expect(backup.version).toBe(1);
+    expect(backup.version).toBe(2);
     expect(backup.userProfile.length).toBe(1);
     expect(backup.workSessions.length).toBeGreaterThan(0);
 

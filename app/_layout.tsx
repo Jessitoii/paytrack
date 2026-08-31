@@ -8,11 +8,12 @@ import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { colors } from '../src/theme/colors';
 import { initializeDatabase } from '../src/database/init';
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 1000 * 30, // 30 seconds
+      staleTime: 0, // Instant local-first reactivity
+      gcTime: 1000 * 60 * 5,
     },
   },
 });

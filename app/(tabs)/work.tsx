@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -28,44 +28,34 @@ import {
   CheckCircle2,
   Trash2,
   Edit3,
+  Sliders,
+  Check,
 } from 'lucide-react-native';
 import { workRepository } from '../../src/database';
+import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
+
+interface BreakItem {
+  id: string;
+  type: string;
+  name: string;
+  durationMinutes: number;
+  isPaid: boolean;
+  startTime?: string;
+  endTime?: string;
+}
 
 export default function TrackWorkScreen() {
   const queryClient = useQueryClient();
 
-  // 1. Finish Work Modal States
-  const [finishModalVisible, setFinishModalVisible] = useState(false);
-  const [finishTimeInput, setFinishTimeInput] = useState('');
-  const [finishPaid15, setFinishPaid15] = useState(true);
-  const [finishUnpaid30, setFinishUnpaid30] = useState(true);
-  const [finishNotes, setFinishNotes] = useState('');
-
-  // 2. Manual Work Modal States
-  const [manualModalVisible, setManualModalVisible] = useState(false);
-  const [manualDateStr, setManualDateStr] = useState(new Date().toISOString().substring(0, 10));
-  const [manualStartTime, setManualStartTime] = useState('14:30');
-  const [manualFinishTime, setManualFinishTime] = useState('23:00');
-  const [manualPaid15, setManualPaid15] = useState(true);
-  const [manualUnpaid30, setManualUnpaid30] = useState(true);
-  const [manualNotes, setManualNotes] = useState('');
-
-  // 3. Edit Session Modal States
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [editDateStr, setEditDateStr] = useState('');
-  const [editStartTime, setEditStartTime] = useState('');
-  const [editFinishTime, setEditFinishTime] = useState('');
-  const [editPaid15, setEditPaid15] = useState(true);
-  const [editUnpaid30, setEditUnpaid30] = useState(true);
-  const [editNotes, setEditNotes] = useState('');
-
-  const { data: workSessions, isLoading } = useQuery({
+  const { data: workSessions, isLoading, refetch: refetchWork } = useQuery({
     queryKey: ['localWorkSessions'],
     queryFn: () => workRepository.listWorkSessions(),
   });
+
+  // DB Reactivity on database change + tab focus
+  useDatabaseRefresh(['work_changed'], refetchWork);
 
   const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
   const pastSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
@@ -78,8 +68,95 @@ export default function TrackWorkScreen() {
     return `${hh}:${mm}`;
   };
 
-  // Helper for 5-min ceiling preview calculation
-  const calculatePreview = (startTimeStr: string, finishTimeStr: string, paid15: boolean, unpaid30: boolean) => {
+  // 1. Finish Work Modal State
+  const [finishModalVisible, setFinishModalVisible] = useState(false);
+  const [finishTimeInput, setFinishTimeInput] = useState('');
+  const [finishBreaks, setFinishBreaks] = useState<BreakItem[]>([]);
+  const [finishNotes, setFinishNotes] = useState('');
+
+  // 2. Manual Work Modal State
+  const [manualModalVisible, setManualModalVisible] = useState(false);
+  const [manualDateStr, setManualDateStr] = useState(() => new Date().toISOString().substring(0, 10));
+  const [manualStartTime, setManualStartTime] = useState('14:30');
+  const [manualFinishTime, setManualFinishTime] = useState('23:00');
+  const [manualBreaks, setManualBreaks] = useState<BreakItem[]>([]);
+  const [manualNotes, setManualNotes] = useState('');
+
+  // 3. Edit Past Session Modal State
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editDateStr, setEditDateStr] = useState('');
+  const [editStartTime, setEditStartTime] = useState('');
+  const [editFinishTime, setEditFinishTime] = useState('');
+  const [editBreaks, setEditBreaks] = useState<BreakItem[]>([]);
+  const [editNotes, setEditNotes] = useState('');
+
+  // 4. Custom Break Adder Modal State
+  const [customBreakModalVisible, setCustomBreakModalVisible] = useState(false);
+  const [customBreakTarget, setCustomBreakTarget] = useState<'FINISH' | 'MANUAL' | 'EDIT'>('FINISH');
+  const [customBreakName, setCustomBreakName] = useState('Coffee Break');
+  const [customBreakDuration, setCustomBreakDuration] = useState('15');
+  const [customBreakIsPaid, setCustomBreakIsPaid] = useState(true);
+  const [customBreakStart, setCustomBreakStart] = useState('');
+  const [customBreakEnd, setCustomBreakEnd] = useState('');
+
+  // Helper to add standard quick break
+  const addQuickBreak = (
+    target: 'FINISH' | 'MANUAL' | 'EDIT',
+    type: string,
+    name: string,
+    durationMinutes: number,
+    isPaid: boolean
+  ) => {
+    const item: BreakItem = {
+      id: `brk_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+      type,
+      name,
+      durationMinutes,
+      isPaid,
+    };
+
+    if (target === 'FINISH') setFinishBreaks((prev) => [...prev, item]);
+    else if (target === 'MANUAL') setManualBreaks((prev) => [...prev, item]);
+    else if (target === 'EDIT') setEditBreaks((prev) => [...prev, item]);
+  };
+
+  const removeBreak = (target: 'FINISH' | 'MANUAL' | 'EDIT', id: string) => {
+    if (target === 'FINISH') setFinishBreaks((prev) => prev.filter((b) => b.id !== id));
+    else if (target === 'MANUAL') setManualBreaks((prev) => prev.filter((b) => b.id !== id));
+    else if (target === 'EDIT') setEditBreaks((prev) => prev.filter((b) => b.id !== id));
+  };
+
+  const handleSaveCustomBreak = () => {
+    const duration = parseInt(customBreakDuration, 10);
+    if (isNaN(duration) || duration <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid duration in minutes.');
+      return;
+    }
+
+    const item: BreakItem = {
+      id: `brk_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+      type: customBreakIsPaid ? 'CUSTOM_PAID' : 'CUSTOM_UNPAID',
+      name: customBreakName.trim() || (customBreakIsPaid ? 'Custom Paid Break' : 'Custom Unpaid Break'),
+      durationMinutes: duration,
+      isPaid: customBreakIsPaid,
+      startTime: customBreakStart.trim() || undefined,
+      endTime: customBreakEnd.trim() || undefined,
+    };
+
+    if (customBreakTarget === 'FINISH') setFinishBreaks((prev) => [...prev, item]);
+    else if (customBreakTarget === 'MANUAL') setManualBreaks((prev) => [...prev, item]);
+    else if (customBreakTarget === 'EDIT') setEditBreaks((prev) => [...prev, item]);
+
+    setCustomBreakModalVisible(false);
+  };
+
+  // Helper for live preview calculation
+  const calculatePreview = (
+    startTimeStr: string,
+    finishTimeStr: string,
+    breaks: BreakItem[]
+  ) => {
     if (!startTimeStr || !finishTimeStr) return null;
     const [sh, sm] = startTimeStr.split(':').map(Number);
     const [fh, fm] = finishTimeStr.split(':').map(Number);
@@ -89,12 +166,18 @@ export default function TrackWorkScreen() {
     let finishMins = fh * 60 + fm;
     if (finishMins < startMins) finishMins += 24 * 60; // overnight
 
-    let elapsed = finishMins - startMins;
+    let rawElapsed = finishMins - startMins;
     let roundedFinishMins = Math.ceil(finishMins / 5) * 5;
     let roundedElapsed = roundedFinishMins - startMins;
 
-    const unpaidDeduction = unpaid30 ? 30 : 0;
-    const paidMins = Math.max(0, roundedElapsed - unpaidDeduction);
+    let paidBreakMins = 0;
+    let unpaidBreakMins = 0;
+    for (const b of breaks) {
+      if (b.isPaid) paidBreakMins += b.durationMinutes;
+      else unpaidBreakMins += b.durationMinutes;
+    }
+
+    const paidMins = Math.max(0, roundedElapsed - unpaidBreakMins);
 
     const roundedHH = String(Math.floor((roundedFinishMins % (24 * 60)) / 60)).padStart(2, '0');
     const roundedMM = String(roundedFinishMins % 60).padStart(2, '0');
@@ -103,7 +186,9 @@ export default function TrackWorkScreen() {
 
     return {
       roundedFinishStr: `${roundedHH}:${roundedMM}`,
-      elapsedMins: elapsed,
+      rawElapsed,
+      paidBreakMins,
+      unpaidBreakMins,
       paidMins,
       estGross,
     };
@@ -176,8 +261,11 @@ export default function TrackWorkScreen() {
   // Open Finish Modal
   const handleOpenFinishModal = () => {
     setFinishTimeInput(getCurrentHHMM());
-    setFinishPaid15(true);
-    setFinishUnpaid30(true);
+    // Default breaks: 1x 15m Paid Coffee, 1x 30m Unpaid Meal
+    setFinishBreaks([
+      { id: 'b1', type: 'PAID_15', name: '15m Paid Coffee Break', durationMinutes: 15, isPaid: true },
+      { id: 'b2', type: 'UNPAID_30', name: '30m Meal Break (Unpaid)', durationMinutes: 30, isPaid: false },
+    ]);
     setFinishNotes('');
     setFinishModalVisible(true);
   };
@@ -198,17 +286,9 @@ export default function TrackWorkScreen() {
       rawFinish.setDate(rawFinish.getDate() + 1);
     }
 
-    const breaks = [];
-    if (finishPaid15) {
-      breaks.push({ type: 'PAID_15', durationMinutes: 15, isPaid: true, name: '15m Paid Coffee Break' });
-    }
-    if (finishUnpaid30) {
-      breaks.push({ type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: '30m Meal Break (Unpaid)' });
-    }
-
     finishMutation.mutate({
       rawFinish,
-      breaks,
+      breaks: finishBreaks,
       notes: finishNotes || undefined,
     });
   };
@@ -221,12 +301,19 @@ export default function TrackWorkScreen() {
     setEditStartTime(formatTimeHHMM(session.actualStart));
     setEditFinishTime(session.rawFinish ? formatTimeHHMM(session.rawFinish) : '23:00');
 
-    const hasP15 = session.breaks?.some((b: any) => b.isPaid) ?? true;
-    const hasU30 = session.breaks?.some((b: any) => !b.isPaid) ?? true;
-    setEditPaid15(hasP15);
-    setEditUnpaid30(hasU30);
-    setEditNotes(session.notes || '');
+    // Populate existing breaks
+    const existingBreaks: BreakItem[] = (session.breaks || []).map((b: any, idx: number) => ({
+      id: b.id || `brk_${idx}`,
+      type: b.type || (b.isPaid ? 'PAID_15' : 'UNPAID_30'),
+      name: b.name || (b.isPaid ? 'Paid Break' : 'Unpaid Break'),
+      durationMinutes: b.durationMinutes || (b.isPaid ? 15 : 30),
+      isPaid: Boolean(b.isPaid),
+      startTime: b.startTime,
+      endTime: b.endTime,
+    }));
 
+    setEditBreaks(existingBreaks);
+    setEditNotes(session.notes || '');
     setEditModalVisible(true);
   };
 
@@ -235,23 +322,15 @@ export default function TrackWorkScreen() {
     const [sh, sm] = editStartTime.split(':').map(Number);
     const [fh, fm] = editFinishTime.split(':').map(Number);
 
-    const baseDate = new Date(editDateStr);
-    const actualStart = new Date(baseDate);
+    const [y, m, d] = editDateStr.split('-').map(Number);
+    const actualStart = new Date(y, m - 1, d);
     actualStart.setHours(sh || 14, sm || 30, 0, 0);
 
-    const rawFinish = new Date(baseDate);
+    const rawFinish = new Date(y, m - 1, d);
     rawFinish.setHours(fh || 23, fm || 0, 0, 0);
 
     if (fh < sh) {
       rawFinish.setDate(rawFinish.getDate() + 1);
-    }
-
-    const breaks = [];
-    if (editPaid15) {
-      breaks.push({ type: 'PAID_15', durationMinutes: 15, isPaid: true, name: '15m Paid Coffee Break' });
-    }
-    if (editUnpaid30) {
-      breaks.push({ type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: '30m Meal Break (Unpaid)' });
     }
 
     updateWorkMutation.mutate({
@@ -259,7 +338,7 @@ export default function TrackWorkScreen() {
       payload: {
         actualStart,
         rawFinish,
-        breaks,
+        breaks: editBreaks,
         notes: editNotes || undefined,
       },
     });
@@ -269,29 +348,21 @@ export default function TrackWorkScreen() {
     const [sh, sm] = manualStartTime.split(':').map(Number);
     const [eh, em] = manualFinishTime.split(':').map(Number);
 
-    const baseDate = new Date(manualDateStr);
-    const actualStart = new Date(baseDate);
+    const [y, m, d] = manualDateStr.split('-').map(Number);
+    const actualStart = new Date(y, m - 1, d);
     actualStart.setHours(sh || 14, sm || 30, 0, 0);
 
-    const rawFinish = new Date(baseDate);
+    const rawFinish = new Date(y, m - 1, d);
     rawFinish.setHours(eh || 23, em || 0, 0, 0);
 
     if (eh < sh) {
       rawFinish.setDate(rawFinish.getDate() + 1);
     }
 
-    const breaks = [];
-    if (manualPaid15) {
-      breaks.push({ type: 'PAID_15', durationMinutes: 15, isPaid: true, name: '15m Paid Coffee Break' });
-    }
-    if (manualUnpaid30) {
-      breaks.push({ type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: '30m Meal Break (Unpaid)' });
-    }
-
     manualWorkMutation.mutate({
       actualStart,
       rawFinish,
-      breaks,
+      breaks: manualBreaks,
       notes: manualNotes || undefined,
     });
   };
@@ -322,10 +393,131 @@ export default function TrackWorkScreen() {
     return calculatePreview(
       formatTimeHHMM(activeSession.actualStart),
       finishTimeInput,
-      finishPaid15,
-      finishUnpaid30
+      finishBreaks
     );
-  }, [activeSession, finishTimeInput, finishPaid15, finishUnpaid30]);
+  }, [activeSession, finishTimeInput, finishBreaks]);
+
+  // Live edit preview
+  const editPreview = useMemo(() => {
+    return calculatePreview(editStartTime, editFinishTime, editBreaks);
+  }, [editStartTime, editFinishTime, editBreaks]);
+
+  // Live manual preview
+  const manualPreview = useMemo(() => {
+    return calculatePreview(manualStartTime, manualFinishTime, manualBreaks);
+  }, [manualStartTime, manualFinishTime, manualBreaks]);
+
+  // Subcomponent to render a break collection
+  const renderBreakCollection = (target: 'FINISH' | 'MANUAL' | 'EDIT', breaks: BreakItem[]) => (
+    <View style={styles.breakCollectionWrapper}>
+      <View style={styles.breakCollectionHeader}>
+        <Text style={styles.inputLabel}>BREAKS & MEAL PERIODS ({breaks.length})</Text>
+      </View>
+
+      {/* Quick Add Pills */}
+      <View style={styles.quickAddPillsRow}>
+        <TouchableOpacity
+          onPress={() => addQuickBreak(target, 'PAID_15', '15m Paid Coffee', 15, true)}
+          style={styles.quickAddPillEmerald}
+        >
+          <Coffee size={12} color={colors.primaryLight} />
+          <Text style={styles.quickAddPillEmeraldText}>+ 15m Paid</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => addQuickBreak(target, 'UNPAID_15', '15m Unpaid Break', 15, false)}
+          style={styles.quickAddPillAmber}
+        >
+          <Coffee size={12} color={colors.amber} />
+          <Text style={styles.quickAddPillAmberText}>+ 15m Unpaid</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => addQuickBreak(target, 'UNPAID_30', '30m Meal (Unpaid)', 30, false)}
+          style={styles.quickAddPillAmber}
+        >
+          <Utensils size={12} color={colors.amber} />
+          <Text style={styles.quickAddPillAmberText}>+ 30m Meal</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => {
+            setCustomBreakTarget(target);
+            setCustomBreakName('Coffee Break');
+            setCustomBreakDuration('15');
+            setCustomBreakIsPaid(true);
+            setCustomBreakStart('');
+            setCustomBreakEnd('');
+            setCustomBreakModalVisible(true);
+          }}
+          style={styles.quickAddPillCustom}
+        >
+          <Sliders size={12} color={colors.textSecondary} />
+          <Text style={styles.quickAddPillCustomText}>+ Custom</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Break List Cards */}
+      {breaks.length === 0 ? (
+        <View style={styles.noBreaksCard}>
+          <Text style={styles.noBreaksText}>No breaks logged for this shift.</Text>
+        </View>
+      ) : (
+        breaks.map((b) => (
+          <View key={b.id} style={styles.breakCard}>
+            <View style={styles.breakCardLeft}>
+              <View
+                style={[
+                  styles.breakIconWrapper,
+                  b.isPaid ? styles.breakIconPaid : styles.breakIconUnpaid,
+                ]}
+              >
+                {b.durationMinutes >= 30 ? (
+                  <Utensils size={14} color={b.isPaid ? colors.primaryLight : colors.amber} />
+                ) : (
+                  <Coffee size={14} color={b.isPaid ? colors.primaryLight : colors.amber} />
+                )}
+              </View>
+              <View>
+                <Text style={styles.breakNameText}>{b.name}</Text>
+                <Text style={styles.breakTimeRangeText}>
+                  {b.startTime && b.endTime
+                    ? `${b.startTime} → ${b.endTime} • `
+                    : ''}
+                  {b.durationMinutes} min • {b.isPaid ? 'PAID' : 'UNPAID'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.breakCardRight}>
+              <View
+                style={[
+                  styles.breakStatusBadge,
+                  b.isPaid ? styles.badgePaid : styles.badgeUnpaid,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.breakStatusBadgeText,
+                    b.isPaid ? styles.badgeTextPaid : styles.badgeTextUnpaid,
+                  ]}
+                >
+                  {b.isPaid ? 'PAID' : '- ' + b.durationMinutes + 'm'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => removeBreak(target, b.id)}
+                style={styles.breakDeleteButton}
+              >
+                <X size={14} color={colors.danger} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -338,7 +530,17 @@ export default function TrackWorkScreen() {
             <Text style={styles.headerTitle}>Track Work</Text>
           </View>
           <TouchableOpacity
-            onPress={() => setManualModalVisible(true)}
+            onPress={() => {
+              setManualDateStr(new Date().toISOString().substring(0, 10));
+              setManualStartTime('14:30');
+              setManualFinishTime('23:00');
+              setManualBreaks([
+                { id: 'mb1', type: 'PAID_15', name: '15m Paid Coffee', durationMinutes: 15, isPaid: true },
+                { id: 'mb2', type: 'UNPAID_30', name: '30m Meal (Unpaid)', durationMinutes: 30, isPaid: false },
+              ]);
+              setManualNotes('');
+              setManualModalVisible(true);
+            }}
             activeOpacity={0.8}
             style={styles.manualEntryButton}
           >
@@ -465,6 +667,29 @@ export default function TrackWorkScreen() {
                     Elapsed: {formatMinutes(session.elapsedMinutes || 0)}
                   </Text>
                 </View>
+
+                {session.breaks && session.breaks.length > 0 && (
+                  <View style={styles.sessionBreaksSummaryRow}>
+                    {session.breaks.map((b: any, bIdx: number) => (
+                      <View
+                        key={bIdx}
+                        style={[
+                          styles.sessionMiniBreakBadge,
+                          b.isPaid ? styles.miniBreakPaid : styles.miniBreakUnpaid,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.sessionMiniBreakText,
+                            b.isPaid ? { color: colors.primaryLight } : { color: colors.amber },
+                          ]}
+                        >
+                          {b.durationMinutes}m {b.isPaid ? 'Paid' : 'Unpaid'}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </TouchableOpacity>
             ))
           )}
@@ -493,80 +718,80 @@ export default function TrackWorkScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Finish Time Override Input */}
-            <View style={styles.timeInputRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>FINISH TIME (HH:MM)</Text>
-                <TextInput
-                  value={finishTimeInput}
-                  onChangeText={setFinishTimeInput}
-                  placeholder="23:17"
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.textInput}
-                />
-              </View>
-              <TouchableOpacity
-                onPress={() => setFinishTimeInput(getCurrentHHMM())}
-                style={styles.useCurrentTimeButton}
-              >
-                <Clock size={14} color={colors.primaryLight} />
-                <Text style={styles.useCurrentTimeText}>Use Current</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Break Selection on Finish */}
-            <Text style={styles.inputLabel}>SELECT SHIFT BREAKS</Text>
-            <View style={styles.breakButtonsRow}>
-              <TouchableOpacity
-                onPress={() => setFinishPaid15(!finishPaid15)}
-                style={[styles.breakButton, finishPaid15 && styles.breakButtonActive]}
-              >
-                <Coffee size={15} color={finishPaid15 ? colors.primary : colors.textTertiary} />
-                <Text style={[styles.breakButtonText, finishPaid15 && styles.breakButtonTextActive]}>
-                  15m Paid Coffee
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setFinishUnpaid30(!finishUnpaid30)}
-                style={[styles.breakButton, finishUnpaid30 && styles.breakButtonActive]}
-              >
-                <Utensils
-                  size={15}
-                  color={finishUnpaid30 ? colors.amber : colors.textTertiary}
-                />
-                <Text
-                  style={[
-                    styles.breakButtonText,
-                    finishUnpaid30 && styles.breakButtonTextActiveAmber,
-                  ]}
+            <ScrollView style={{ maxHeight: 420 }}>
+              {/* Finish Time Override Input */}
+              <View style={styles.timeInputRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>ACTUAL FINISH TIME (HH:MM)</Text>
+                  <TextInput
+                    value={finishTimeInput}
+                    onChangeText={setFinishTimeInput}
+                    placeholder="23:17"
+                    placeholderTextColor={colors.textTertiary}
+                    style={styles.textInput}
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={() => setFinishTimeInput(getCurrentHHMM())}
+                  style={styles.useCurrentTimeButton}
                 >
-                  30m Meal (Unpaid)
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Live Calculation Preview Card */}
-            {finishPreview && (
-              <View style={styles.previewBox}>
-                <View style={styles.previewRow}>
-                  <Text style={styles.previewLabel}>5-Min Rounded Finish:</Text>
-                  <Text style={styles.previewValueHighlighted}>
-                    {finishPreview.roundedFinishStr}
-                  </Text>
-                </View>
-                <View style={styles.previewRow}>
-                  <Text style={styles.previewLabel}>Net Paid Time:</Text>
-                  <Text style={styles.previewValue}>{formatMinutes(finishPreview.paidMins)}</Text>
-                </View>
-                <View style={styles.previewRow}>
-                  <Text style={styles.previewLabel}>Estimated Gross Base:</Text>
-                  <Text style={styles.previewValueEmerald}>
-                    {formatEUR(finishPreview.estGross)}
-                  </Text>
-                </View>
+                  <Clock size={14} color={colors.primaryLight} />
+                  <Text style={styles.useCurrentTimeText}>Use Current</Text>
+                </TouchableOpacity>
               </View>
-            )}
+
+              {/* Multi-Break Collection UI */}
+              {renderBreakCollection('FINISH', finishBreaks)}
+
+              {/* Live Calculation Preview Card */}
+              {finishPreview && (
+                <View style={styles.previewBox}>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Raw Elapsed Time:</Text>
+                    <Text style={styles.previewValue}>{formatMinutes(finishPreview.rawElapsed)}</Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>5-Min Rounded Finish:</Text>
+                    <Text style={styles.previewValueHighlighted}>
+                      {finishPreview.roundedFinishStr}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Paid Breaks (No deduction):</Text>
+                    <Text style={[styles.previewValue, { color: colors.primaryLight }]}>
+                      {finishPreview.paidBreakMins}m
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Unpaid Breaks (Deducted):</Text>
+                    <Text style={[styles.previewValue, { color: colors.amber }]}>
+                      -{finishPreview.unpaidBreakMins}m
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Net Paid Work Time:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatMinutes(finishPreview.paidMins)}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Estimated Gross Base:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatEUR(finishPreview.estGross)}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>SHIFT NOTES (OPTIONAL)</Text>
+              <TextInput
+                value={finishNotes}
+                onChangeText={setFinishNotes}
+                placeholder="Good shift, left right on time"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
+            </ScrollView>
 
             <TouchableOpacity
               onPress={handleConfirmFinish}
@@ -604,78 +829,75 @@ export default function TrackWorkScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>DATE (YYYY-MM-DD)</Text>
-            <TextInput
-              value={editDateStr}
-              onChangeText={setEditDateStr}
-              placeholder="2026-08-24"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
+            <ScrollView style={{ maxHeight: 420 }}>
+              <Text style={styles.inputLabel}>DATE (YYYY-MM-DD)</Text>
+              <TextInput
+                value={editDateStr}
+                onChangeText={setEditDateStr}
+                placeholder="2026-08-24"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
 
-            <View style={styles.timeInputsRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>START TIME (HH:MM)</Text>
-                <TextInput
-                  value={editStartTime}
-                  onChangeText={setEditStartTime}
-                  placeholder="14:37"
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.textInput}
-                />
+              <View style={styles.timeInputsRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>START TIME (HH:MM)</Text>
+                  <TextInput
+                    value={editStartTime}
+                    onChangeText={setEditStartTime}
+                    placeholder="14:37"
+                    placeholderTextColor={colors.textTertiary}
+                    style={styles.textInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>FINISH TIME (HH:MM)</Text>
+                  <TextInput
+                    value={editFinishTime}
+                    onChangeText={setEditFinishTime}
+                    placeholder="23:21"
+                    placeholderTextColor={colors.textTertiary}
+                    style={styles.textInput}
+                  />
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>FINISH TIME (HH:MM)</Text>
-                <TextInput
-                  value={editFinishTime}
-                  onChangeText={setEditFinishTime}
-                  placeholder="23:21"
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
 
-            {/* Break Toggles */}
-            <Text style={styles.inputLabel}>DEDUCTED BREAKS</Text>
-            <View style={styles.breakButtonsRow}>
-              <TouchableOpacity
-                onPress={() => setEditPaid15(!editPaid15)}
-                style={[styles.breakButton, editPaid15 && styles.breakButtonActive]}
-              >
-                <Coffee size={15} color={editPaid15 ? colors.primary : colors.textTertiary} />
-                <Text style={[styles.breakButtonText, editPaid15 && styles.breakButtonTextActive]}>
-                  15m Paid Break
-                </Text>
-              </TouchableOpacity>
+              {/* Multi-Break Collection UI */}
+              {renderBreakCollection('EDIT', editBreaks)}
 
-              <TouchableOpacity
-                onPress={() => setEditUnpaid30(!editUnpaid30)}
-                style={[styles.breakButton, editUnpaid30 && styles.breakButtonActive]}
-              >
-                <Utensils
-                  size={15}
-                  color={editUnpaid30 ? colors.amber : colors.textTertiary}
-                />
-                <Text
-                  style={[
-                    styles.breakButtonText,
-                    editUnpaid30 && styles.breakButtonTextActiveAmber,
-                  ]}
-                >
-                  30m Meal (Unpaid)
-                </Text>
-              </TouchableOpacity>
-            </View>
+              {/* Live Calculation Preview Card */}
+              {editPreview && (
+                <View style={styles.previewBox}>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>5-Min Rounded Finish:</Text>
+                    <Text style={styles.previewValueHighlighted}>
+                      {editPreview.roundedFinishStr}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Net Paid Work Time:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatMinutes(editPreview.paidMins)}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Estimated Gross Base:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatEUR(editPreview.estGross)}
+                    </Text>
+                  </View>
+                </View>
+              )}
 
-            <Text style={[styles.inputLabel, { marginTop: 14 }]}>NOTES (OPTIONAL)</Text>
-            <TextInput
-              value={editNotes}
-              onChangeText={setEditNotes}
-              placeholder="Corrected shift time"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>NOTES (OPTIONAL)</Text>
+              <TextInput
+                value={editNotes}
+                onChangeText={setEditNotes}
+                placeholder="Corrected shift time"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
+            </ScrollView>
 
             <View style={styles.editActionsRow}>
               <TouchableOpacity
@@ -732,78 +954,75 @@ export default function TrackWorkScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>DATE (YYYY-MM-DD)</Text>
-            <TextInput
-              value={manualDateStr}
-              onChangeText={setManualDateStr}
-              placeholder="2026-08-24"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
+            <ScrollView style={{ maxHeight: 420 }}>
+              <Text style={styles.inputLabel}>DATE (YYYY-MM-DD)</Text>
+              <TextInput
+                value={manualDateStr}
+                onChangeText={setManualDateStr}
+                placeholder="2026-08-24"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
 
-            <View style={styles.timeInputsRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>EXACT START (HH:MM)</Text>
-                <TextInput
-                  value={manualStartTime}
-                  onChangeText={setManualStartTime}
-                  placeholder="14:37"
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.textInput}
-                />
+              <View style={styles.timeInputsRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>EXACT START (HH:MM)</Text>
+                  <TextInput
+                    value={manualStartTime}
+                    onChangeText={setManualStartTime}
+                    placeholder="14:37"
+                    placeholderTextColor={colors.textTertiary}
+                    style={styles.textInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>EXACT FINISH (HH:MM)</Text>
+                  <TextInput
+                    value={manualFinishTime}
+                    onChangeText={setManualFinishTime}
+                    placeholder="23:21"
+                    placeholderTextColor={colors.textTertiary}
+                    style={styles.textInput}
+                  />
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>EXACT FINISH (HH:MM)</Text>
-                <TextInput
-                  value={manualFinishTime}
-                  onChangeText={setManualFinishTime}
-                  placeholder="23:21"
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
 
-            {/* Break Toggles */}
-            <Text style={styles.inputLabel}>DEDUCTED BREAKS</Text>
-            <View style={styles.breakButtonsRow}>
-              <TouchableOpacity
-                onPress={() => setManualPaid15(!manualPaid15)}
-                style={[styles.breakButton, manualPaid15 && styles.breakButtonActive]}
-              >
-                <Coffee size={15} color={manualPaid15 ? colors.primary : colors.textTertiary} />
-                <Text style={[styles.breakButtonText, manualPaid15 && styles.breakButtonTextActive]}>
-                  15m Paid Break
-                </Text>
-              </TouchableOpacity>
+              {/* Multi-Break Collection UI */}
+              {renderBreakCollection('MANUAL', manualBreaks)}
 
-              <TouchableOpacity
-                onPress={() => setManualUnpaid30(!manualUnpaid30)}
-                style={[styles.breakButton, manualUnpaid30 && styles.breakButtonActive]}
-              >
-                <Utensils
-                  size={15}
-                  color={manualUnpaid30 ? colors.amber : colors.textTertiary}
-                />
-                <Text
-                  style={[
-                    styles.breakButtonText,
-                    manualUnpaid30 && styles.breakButtonTextActiveAmber,
-                  ]}
-                >
-                  30m Meal (Unpaid)
-                </Text>
-              </TouchableOpacity>
-            </View>
+              {/* Live Calculation Preview Card */}
+              {manualPreview && (
+                <View style={styles.previewBox}>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>5-Min Rounded Finish:</Text>
+                    <Text style={styles.previewValueHighlighted}>
+                      {manualPreview.roundedFinishStr}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Net Paid Work Time:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatMinutes(manualPreview.paidMins)}
+                    </Text>
+                  </View>
+                  <View style={styles.previewRow}>
+                    <Text style={styles.previewLabel}>Estimated Gross Base:</Text>
+                    <Text style={styles.previewValueEmerald}>
+                      {formatEUR(manualPreview.estGross)}
+                    </Text>
+                  </View>
+                </View>
+              )}
 
-            <Text style={[styles.inputLabel, { marginTop: 14 }]}>NOTES (OPTIONAL)</Text>
-            <TextInput
-              value={manualNotes}
-              onChangeText={setManualNotes}
-              placeholder="e.g. Forgot to clock out"
-              placeholderTextColor={colors.textTertiary}
-              style={styles.textInput}
-            />
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>NOTES (OPTIONAL)</Text>
+              <TextInput
+                value={manualNotes}
+                onChangeText={setManualNotes}
+                placeholder="Past shift entry"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.textInput}
+              />
+            </ScrollView>
 
             <TouchableOpacity
               onPress={handleSaveManualSession}
@@ -814,11 +1033,101 @@ export default function TrackWorkScreen() {
               {manualWorkMutation.isPending ? (
                 <ActivityIndicator color={colors.textInverse} />
               ) : (
-                <Text style={styles.saveManualButtonText}>Save Manual Session</Text>
+                <Text style={styles.saveManualButtonText}>Record Work Session</Text>
               )}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* 4. Custom Break Modal */}
+      <Modal visible={customBreakModalVisible} animationType="fade" transparent>
+        <View style={styles.customModalOverlay}>
+          <View style={styles.customBreakCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Custom Break</Text>
+              <TouchableOpacity
+                onPress={() => setCustomBreakModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <X size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>BREAK NAME / DESCRIPTION</Text>
+            <TextInput
+              value={customBreakName}
+              onChangeText={setCustomBreakName}
+              placeholder="Coffee Break, Smoke Break, etc."
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
+            />
+
+            <View style={styles.timeInputsRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>START TIME (OPTIONAL)</Text>
+                <TextInput
+                  value={customBreakStart}
+                  onChangeText={setCustomBreakStart}
+                  placeholder="18:00"
+                  placeholderTextColor={colors.textTertiary}
+                  style={styles.textInput}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>END TIME (OPTIONAL)</Text>
+                <TextInput
+                  value={customBreakEnd}
+                  onChangeText={setCustomBreakEnd}
+                  placeholder="18:15"
+                  placeholderTextColor={colors.textTertiary}
+                  style={styles.textInput}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.inputLabel}>DURATION (MINUTES)</Text>
+            <TextInput
+              value={customBreakDuration}
+              onChangeText={setCustomBreakDuration}
+              placeholder="15"
+              keyboardType="numeric"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
+            />
+
+            <Text style={[styles.inputLabel, { marginTop: 12 }]}>PAYMENT STATUS</Text>
+            <View style={styles.paidToggleRow}>
+              <TouchableOpacity
+                onPress={() => setCustomBreakIsPaid(true)}
+                style={[styles.paidToggleBtn, customBreakIsPaid && styles.paidToggleBtnActivePaid]}
+              >
+                <Coffee size={15} color={customBreakIsPaid ? colors.primaryLight : colors.textTertiary} />
+                <Text style={[styles.paidToggleText, customBreakIsPaid && styles.paidToggleTextActivePaid]}>
+                  PAID (Company pays)
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setCustomBreakIsPaid(false)}
+                style={[styles.paidToggleBtn, !customBreakIsPaid && styles.paidToggleBtnActiveUnpaid]}
+              >
+                <Utensils size={15} color={!customBreakIsPaid ? colors.amber : colors.textTertiary} />
+                <Text style={[styles.paidToggleText, !customBreakIsPaid && styles.paidToggleTextActiveUnpaid]}>
+                  UNPAID (Deducted)
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={handleSaveCustomBreak}
+              activeOpacity={0.85}
+              style={styles.saveCustomBreakBtn}
+            >
+              <Text style={styles.saveCustomBreakBtnText}>Add Break to List</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -863,7 +1172,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 12,
-    gap: 5,
+    gap: 6,
   },
   manualEntryButtonText: {
     color: colors.textPrimary,
@@ -871,53 +1180,54 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Hero Card
+  // Main Work Hero Card
   heroCard: {
     backgroundColor: colors.card,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 22,
-    marginBottom: 18,
+    marginBottom: 20,
   },
   heroCardActive: {
+    backgroundColor: 'rgba(6, 78, 59, 0.4)',
     borderColor: colors.primary,
-    backgroundColor: 'rgba(6, 78, 59, 0.35)',
   },
   statusLabel: {
     color: colors.textSecondary,
     fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
   statusTitle: {
     color: colors.textPrimary,
     fontSize: 24,
     fontWeight: '900',
-    marginTop: 4,
-    marginBottom: 8,
+    marginVertical: 4,
   },
   statusTitleActive: {
     color: colors.primaryLight,
   },
   activeTimeContainer: {
-    marginVertical: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    borderRadius: 14,
+    padding: 14,
+    marginVertical: 12,
   },
   activeStartTimeLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
   },
   activeStartTimeValue: {
     color: colors.textPrimary,
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '900',
-    letterSpacing: -0.5,
     marginTop: 2,
   },
   roundingNote: {
-    color: colors.primaryLight,
-    fontSize: 12,
+    color: colors.textTertiary,
+    fontSize: 11,
     fontWeight: '500',
     marginTop: 4,
   },
@@ -925,42 +1235,33 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '500',
-    marginVertical: 8,
     lineHeight: 18,
+    marginVertical: 12,
   },
-
-  // Action Buttons
   startButton: {
     backgroundColor: colors.primary,
     borderRadius: 16,
-    height: 56,
+    paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
     shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
-  buttonInnerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   startButtonText: {
     color: colors.textInverse,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   finishButton: {
     backgroundColor: colors.danger,
     borderRadius: 16,
-    height: 56,
+    paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
     shadowColor: colors.danger,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -973,17 +1274,22 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.5,
   },
+  buttonInnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
 
   // Metrics Grid
   metricsGrid: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 20,
+    marginBottom: 24,
   },
   metricCard: {
     flex: 1,
     backgroundColor: colors.card,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 16,
@@ -1001,13 +1307,13 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     color: colors.textPrimary,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
   },
   metricSub: {
     color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '500',
+    fontSize: 10,
+    fontWeight: '600',
     marginTop: 2,
   },
 
@@ -1018,13 +1324,13 @@ const styles = StyleSheet.create({
   historyHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     marginBottom: 12,
   },
   historySectionTitle: {
     color: colors.textSecondary,
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0.8,
   },
   emptyHistoryCard: {
@@ -1045,7 +1351,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 16,
+    padding: 14,
     marginBottom: 10,
   },
   sessionCardHeader: {
@@ -1067,6 +1373,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
@@ -1080,6 +1388,7 @@ const styles = StyleSheet.create({
   sessionDetailsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
   sessionTimeSpan: {
     color: colors.textSecondary,
@@ -1091,8 +1400,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
+  sessionBreaksSummaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+  },
+  sessionMiniBreakBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  miniBreakPaid: {
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  miniBreakUnpaid: {
+    backgroundColor: colors.amberBg,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  sessionMiniBreakText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+  },
 
-  // Modal
+  // Modal Common
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -1104,17 +1440,18 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     borderTopWidth: 1,
     borderTopColor: colors.cardBorder,
-    padding: 24,
+    padding: 22,
+    maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   modalTitle: {
     color: colors.textPrimary,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '800',
   },
   modalSubtitle: {
@@ -1147,17 +1484,17 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
-    marginBottom: 14,
-  },
-  timeInputsRow: {
-    flexDirection: 'row',
-    gap: 12,
+    marginBottom: 12,
   },
   timeInputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,
     marginBottom: 6,
+  },
+  timeInputsRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   useCurrentTimeButton: {
     flexDirection: 'row',
@@ -1166,58 +1503,181 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(16, 185, 129, 0.3)',
     borderWidth: 1,
     borderRadius: 12,
-    paddingHorizontal: 12,
     height: 48,
-    marginBottom: 14,
+    paddingHorizontal: 12,
     gap: 5,
+    marginBottom: 12,
   },
   useCurrentTimeText: {
     color: colors.primaryLight,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
-  breakButtonsRow: {
-    flexDirection: 'row',
-    gap: 10,
+
+  // Multi-Break Collection
+  breakCollectionWrapper: {
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
     marginBottom: 14,
   },
-  breakButton: {
-    flex: 1,
+  breakCollectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  quickAddPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginVertical: 8,
+  },
+  quickAddPillEmerald: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    gap: 4,
+  },
+  quickAddPillEmeraldText: {
+    color: colors.primaryLight,
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  quickAddPillAmber: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.amberBg,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    gap: 4,
+  },
+  quickAddPillAmberText: {
+    color: colors.amber,
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  quickAddPillCustom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardElevated,
     borderColor: colors.cardBorder,
     borderWidth: 1,
-    borderRadius: 14,
-    paddingVertical: 12,
+    borderRadius: 8,
     paddingHorizontal: 8,
-    gap: 6,
+    paddingVertical: 5,
+    gap: 4,
   },
-  breakButtonActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryBg,
+  quickAddPillCustomText: {
+    color: colors.textSecondary,
+    fontSize: 10.5,
+    fontWeight: '700',
   },
-  breakButtonText: {
+  noBreaksCard: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  noBreaksText: {
     color: colors.textTertiary,
     fontSize: 12,
-    fontWeight: '600',
+    fontStyle: 'italic',
   },
-  breakButtonTextActive: {
+  breakCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 6,
+  },
+  breakCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  breakIconWrapper: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  breakIconPaid: {
+    backgroundColor: colors.primaryBg,
+  },
+  breakIconUnpaid: {
+    backgroundColor: colors.amberBg,
+  },
+  breakNameText: {
+    color: colors.textPrimary,
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  breakTimeRangeText: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  breakCardRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  breakStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  badgePaid: {
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  badgeUnpaid: {
+    backgroundColor: colors.amberBg,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+  },
+  breakStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  badgeTextPaid: {
     color: colors.primaryLight,
-    fontWeight: '700',
   },
-  breakButtonTextActiveAmber: {
+  badgeTextUnpaid: {
     color: colors.amber,
-    fontWeight: '700',
   },
+  breakDeleteButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.dangerBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Live Preview Box
   previewBox: {
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 14,
-    marginBottom: 14,
+    marginVertical: 10,
     gap: 6,
   },
   previewRow: {
@@ -1236,24 +1696,38 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   previewValueHighlighted: {
-    color: colors.amber,
+    color: colors.blue,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   previewValueEmerald: {
     color: colors.primaryLight,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
   },
+
   confirmFinishButton: {
     backgroundColor: colors.primary,
     borderRadius: 14,
-    height: 52,
+    height: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 4,
+    marginTop: 12,
   },
   confirmFinishButtonText: {
+    color: colors.textInverse,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  saveManualButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  saveManualButtonText: {
     color: colors.textInverse,
     fontSize: 15,
     fontWeight: '800',
@@ -1261,7 +1735,7 @@ const styles = StyleSheet.create({
   editActionsRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
+    marginTop: 12,
   },
   deleteButton: {
     width: 50,
@@ -1271,17 +1745,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveManualButton: {
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    height: 50,
+
+  // Custom Break Modal Overlay
+  customModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    padding: 20,
   },
-  saveManualButtonText: {
+  customBreakCard: {
+    width: '100%',
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 20,
+  },
+  paidToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  paidToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  paidToggleBtnActivePaid: {
+    backgroundColor: colors.primaryBg,
+    borderColor: colors.primary,
+  },
+  paidToggleBtnActiveUnpaid: {
+    backgroundColor: colors.amberBg,
+    borderColor: colors.amber,
+  },
+  paidToggleText: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  paidToggleTextActivePaid: {
+    color: colors.primaryLight,
+  },
+  paidToggleTextActiveUnpaid: {
+    color: colors.amber,
+  },
+  saveCustomBreakBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveCustomBreakBtnText: {
     color: colors.textInverse,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
   },
 });

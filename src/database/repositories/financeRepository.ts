@@ -1,5 +1,6 @@
 import { getDatabase } from '../db';
 import { userRepository } from './userRepository';
+import { dbEvents } from '../events';
 
 function generateId(prefix = 'fin'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -59,12 +60,15 @@ export const financeRepository = {
       [id, input.categoryId, input.amount, dStr, input.description, input.merchant ?? null, input.isRecurring ? 1 : 0, now, now]
     );
 
-    return db.queryFirst('SELECT * FROM expenses WHERE id = ?;', [id]);
+    const created = await db.queryFirst('SELECT * FROM expenses WHERE id = ?;', [id]);
+    dbEvents.emit('finance_changed');
+    return created;
   },
 
   async deleteExpense(id: string) {
     const db = getDatabase();
     await db.execute('DELETE FROM expenses WHERE id = ?;', [id]);
+    dbEvents.emit('finance_changed');
     return { success: true };
   },
 
@@ -97,6 +101,7 @@ export const financeRepository = {
     );
 
     const created = await db.queryFirst('SELECT * FROM savings_goals WHERE id = ?;', [id]);
+    dbEvents.emit('finance_changed');
     return {
       ...created,
       progressPercentage: created.targetAmount > 0 ? Math.min(100, Math.round((created.currentAmount / created.targetAmount) * 100)) : 0,
@@ -117,6 +122,7 @@ export const financeRepository = {
     );
 
     const updated = await db.queryFirst('SELECT * FROM savings_goals WHERE id = ?;', [id]);
+    dbEvents.emit('finance_changed');
     return {
       ...updated,
       progressPercentage: updated.targetAmount > 0 ? Math.min(100, Math.round((updated.currentAmount / updated.targetAmount) * 100)) : 0,

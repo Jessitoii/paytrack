@@ -5,6 +5,7 @@ import { calculateWorkSession } from '../../../shared/time/periods';
 import { calculateGrossPayroll, calculateNetPayroll } from '../../../shared/payroll/engine';
 import { CARRIERE_AH_PROFILE_2026 } from '../../../shared/payroll/profiles';
 import { Decimal } from '../../../shared/money/decimal';
+import { dbEvents } from '../events';
 import type { TimeBreak } from '../../../shared/types/time';
 import type { PayrollProfile } from '../../../shared/types/payroll';
 
@@ -64,7 +65,7 @@ export const workRepository = {
     // Attach breaks
     const populated = [];
     for (const session of sessions) {
-      const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ?;', [session.id]);
+      const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [session.id]);
       populated.push({
         ...session,
         isManualEntry: Boolean(session.isManualEntry),
@@ -80,7 +81,7 @@ export const workRepository = {
     const session = await db.queryFirst('SELECT * FROM work_sessions WHERE id = ?;', [id]);
     if (!session) return null;
 
-    const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ?;', [id]);
+    const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [id]);
     return {
       ...session,
       isManualEntry: Boolean(session.isManualEntry),
@@ -93,7 +94,7 @@ export const workRepository = {
     const session = await db.queryFirst("SELECT * FROM work_sessions WHERE status = 'WORKING' LIMIT 1;");
     if (!session) return null;
 
-    const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ?;', [session.id]);
+    const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [session.id]);
     return {
       ...session,
       isManualEntry: Boolean(session.isManualEntry),
@@ -122,7 +123,9 @@ export const workRepository = {
       [id, input?.shiftId ?? null, startStr, input?.actualStart ? 1 : 0, input?.notes ?? null, now, now]
     );
 
-    return this.getWorkSessionById(id);
+    const created = await this.getWorkSessionById(id);
+    dbEvents.emit('work_changed');
+    return created;
   },
 
   /**
@@ -142,16 +145,26 @@ export const workRepository = {
 
     const roundedFinish = roundFinishDateTo5Minutes(rawFinish);
 
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       // Save breaks
       await tx.execute('DELETE FROM work_breaks WHERE workSessionId = ?;', [sessionId]);
       const activeBreaks = input?.breaks || [];
       for (const b of activeBreaks) {
         const breakId = generateId('brk');
         await tx.execute(
-          `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?);`,
-          [breakId, sessionId, b.type, b.durationMinutes, b.isPaid ? 1 : 0, b.name ?? null, new Date().toISOString()]
+          `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, startTime, endTime, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            breakId,
+            sessionId,
+            b.type,
+            b.durationMinutes,
+            b.isPaid ? 1 : 0,
+            b.name ?? null,
+            b.startTime ?? null,
+            b.endTime ?? null,
+            new Date().toISOString(),
+          ]
         );
       }
 
@@ -161,6 +174,8 @@ export const workRepository = {
         durationMinutes: b.durationMinutes,
         isPaid: Boolean(b.isPaid),
         name: b.name ?? undefined,
+        startTime: b.startTime ?? undefined,
+        endTime: b.endTime ?? undefined,
       }));
 
       // Calculate deterministic session metrics
@@ -180,6 +195,9 @@ export const workRepository = {
       const updated = await workRepository.getWorkSessionById(sessionId);
       return { session: updated, calculation };
     });
+
+    dbEvents.emit('work_changed');
+    return result;
   },
 
   /**
@@ -207,13 +225,15 @@ export const workRepository = {
       durationMinutes: b.durationMinutes,
       isPaid: Boolean(b.isPaid),
       name: b.name ?? undefined,
+      startTime: b.startTime ?? undefined,
+      endTime: b.endTime ?? undefined,
     }));
 
     const calculation = calculateWorkSession(startDate, rawFinish, domainBreaks);
     const sessionId = generateId('ws');
     const now = new Date().toISOString();
 
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       await tx.execute(
         `INSERT INTO work_sessions (
            id, shiftId, actualStart, rawFinish, roundedFinish, elapsedMinutes, paidMinutes, status, isManualEntry, notes, createdAt, updatedAt
@@ -224,9 +244,19 @@ export const workRepository = {
       for (const b of input.breaks || []) {
         const breakId = generateId('brk');
         await tx.execute(
-          `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?);`,
-          [breakId, sessionId, b.type, b.durationMinutes, b.isPaid ? 1 : 0, b.name ?? null, now]
+          `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, startTime, endTime, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            breakId,
+            sessionId,
+            b.type,
+            b.durationMinutes,
+            b.isPaid ? 1 : 0,
+            b.name ?? null,
+            b.startTime ?? null,
+            b.endTime ?? null,
+            now,
+          ]
         );
       }
 
@@ -235,6 +265,9 @@ export const workRepository = {
       const created = await workRepository.getWorkSessionById(sessionId);
       return { session: created, calculation };
     });
+
+    dbEvents.emit('work_changed');
+    return result;
   },
 
   /**
@@ -262,26 +295,38 @@ export const workRepository = {
 
     const roundedFinish = rawFinish ? roundFinishDateTo5Minutes(rawFinish) : null;
 
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       if (input.breaks) {
         await tx.execute('DELETE FROM work_breaks WHERE workSessionId = ?;', [sessionId]);
         for (const b of input.breaks) {
           const breakId = generateId('brk');
           await tx.execute(
-            `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?);`,
-            [breakId, sessionId, b.type, b.durationMinutes, b.isPaid ? 1 : 0, b.name ?? null, new Date().toISOString()]
+            `INSERT INTO work_breaks (id, workSessionId, type, durationMinutes, isPaid, name, startTime, endTime, createdAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              breakId,
+              sessionId,
+              b.type,
+              b.durationMinutes,
+              b.isPaid ? 1 : 0,
+              b.name ?? null,
+              b.startTime ?? null,
+              b.endTime ?? null,
+              new Date().toISOString(),
+            ]
           );
         }
       }
 
-      const allBreaks = await tx.query('SELECT * FROM work_breaks WHERE workSessionId = ?;', [sessionId]);
+      const allBreaks = await tx.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [sessionId]);
       const domainBreaks: TimeBreak[] = allBreaks.map((b) => ({
         id: b.id,
         type: b.type.toLowerCase() as any,
         durationMinutes: b.durationMinutes,
         isPaid: Boolean(b.isPaid),
         name: b.name ?? undefined,
+        startTime: b.startTime ?? undefined,
+        endTime: b.endTime ?? undefined,
       }));
 
       let elapsedMinutes = 0;
@@ -326,6 +371,9 @@ export const workRepository = {
       const updated = await workRepository.getWorkSessionById(sessionId);
       return { session: updated, calculation };
     });
+
+    dbEvents.emit('work_changed');
+    return result;
   },
 
   async deleteWork(sessionId: string) {
@@ -336,6 +384,7 @@ export const workRepository = {
     const startDate = new Date(session.actualStart);
     await db.execute('DELETE FROM work_sessions WHERE id = ?;', [sessionId]);
     await this.aggregateWeeklyPayroll(startDate);
+    dbEvents.emit('work_changed');
     return { success: true };
   },
 
@@ -355,31 +404,37 @@ export const workRepository = {
     const shiftsToStart = await db.query(
       `SELECT s.* FROM shifts s
        LEFT JOIN work_sessions ws ON ws.shiftId = s.id
-       WHERE s.isDayOff = 0 AND s.plannedStart <= ? AND ws.id IS NULL
-       ORDER BY s.plannedStart ASC;`,
+       WHERE s.isDayOff = 0
+         AND COALESCE(s.expectedActualStart, s.plannedStart) <= ?
+         AND ws.id IS NULL
+       ORDER BY COALESCE(s.expectedActualStart, s.plannedStart) ASC;`,
       [nowStr]
     );
 
     const started = [];
     for (const shift of shiftsToStart) {
-      if (!shift.plannedStart) continue;
+      const targetStart = shift.expectedActualStart || shift.plannedStart;
+      if (!targetStart) continue;
 
       // Ensure no active session was spawned in earlier iteration
       const currentActive = await this.getActiveSession();
       if (currentActive) break;
 
       const sessionId = generateId('ws');
-      const startStr = shift.plannedStart;
       const createdNow = new Date().toISOString();
 
       await db.execute(
         `INSERT INTO work_sessions (id, shiftId, actualStart, status, isManualEntry, notes, createdAt, updatedAt)
          VALUES (?, ?, ?, 'WORKING', 0, ?, ?, ?);`,
-        [sessionId, shift.id, startStr, `Auto-started from planned ${shift.shiftType} shift`, createdNow, createdNow]
+        [sessionId, shift.id, targetStart, `Auto-started from planned ${shift.shiftType} shift`, createdNow, createdNow]
       );
 
       const created = await this.getWorkSessionById(sessionId);
       if (created) started.push(created);
+    }
+
+    if (started.length > 0) {
+      dbEvents.emit('work_changed');
     }
 
     return { autoStartedCount: started.length, sessions: started };
@@ -397,133 +452,160 @@ export const workRepository = {
     const startStr = startDate.toISOString();
     const endStr = endDate.toISOString();
 
-    // 1. Find or create PayrollWeek record
-    let payrollWeek = await db.queryFirst(
-      'SELECT * FROM payroll_weeks WHERE year = ? AND weekNumber = ?;',
-      [year, weekNumber]
-    );
-
-    const now = new Date().toISOString();
-    const payrollWeekId = payrollWeek?.id ?? generateId('pw');
-
-    if (!payrollWeek) {
-      await db.execute(
-        `INSERT INTO payroll_weeks (id, employmentId, year, weekNumber, startDate, endDate, status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, 'ESTIMATED', ?, ?);`,
-        [payrollWeekId, employment.id, year, weekNumber, startStr, endStr, now, now]
-      );
-    }
-
-    // 2. Query completed/edited work sessions for this week
-    const weekSessions = await db.query(
+    // Get completed sessions in this ISO week
+    const sessions = await db.query(
       `SELECT * FROM work_sessions
-       WHERE status IN ('COMPLETED', 'EDITED') AND actualStart >= ? AND actualStart <= ? AND rawFinish IS NOT NULL;`,
+       WHERE status = 'COMPLETED' AND actualStart >= ? AND actualStart <= ?
+       ORDER BY actualStart ASC;`,
       [startStr, endStr]
     );
 
-    if (weekSessions.length === 0) {
-      await db.execute('DELETE FROM payroll_calculations WHERE payrollWeekId = ?;', [payrollWeekId]);
-      return null;
-    }
-
-    // 3. Populate breaks for each session
+    // Calculate domain work sessions
     const calculatedSessions = [];
-    for (const s of weekSessions) {
-      const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ?;', [s.id]);
+    for (const s of sessions) {
+      const sStart = new Date(s.actualStart);
+      const sFinish = s.rawFinish ? new Date(s.rawFinish) : sStart;
+      const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [s.id]);
       const domainBreaks: TimeBreak[] = breaks.map((b) => ({
         id: b.id,
         type: b.type.toLowerCase() as any,
         durationMinutes: b.durationMinutes,
         isPaid: Boolean(b.isPaid),
         name: b.name ?? undefined,
+        startTime: b.startTime ?? undefined,
+        endTime: b.endTime ?? undefined,
       }));
-      calculatedSessions.push(calculateWorkSession(new Date(s.actualStart), new Date(s.rawFinish), domainBreaks));
+
+      const calc = calculateWorkSession(sStart, sFinish, domainBreaks);
+      calculatedSessions.push(calc);
     }
 
-    // 4. Select applicable payroll configuration profile (or default to 2026 Carriere profile)
-    const configRecord = await db.queryFirst(
-      `SELECT * FROM payroll_configurations
-       WHERE effectiveFromWeek <= ? AND (effectiveUntilWeek IS NULL OR effectiveUntilWeek >= ?)
-       ORDER BY effectiveFromWeek DESC LIMIT 1;`,
-      [weekNumber, weekNumber]
-    );
-
-    const profile: PayrollProfile = configRecord
+    // Get applicable payroll configuration
+    const configRow = await userRepository.getEffectivePayrollConfig(targetDate);
+    const profile: PayrollProfile = configRow
       ? {
-          id: configRecord.id,
-          name: configRecord.name,
+          id: configRow.id,
+          name: configRow.name,
           employer: employment.employerName,
           agency: employment.agencyName ?? undefined,
-          effectiveFromWeek: configRecord.effectiveFromWeek,
-          effectiveUntilWeek: configRecord.effectiveUntilWeek ?? undefined,
-          effectiveFromDate: configRecord.effectiveFromDate,
-          baseHourlyRate: configRecord.baseHourlyRate,
-          advHourlyRate: configRecord.advHourlyRate ?? undefined,
-          holidayAllowancePercentage: configRecord.holidayAllowancePercentage,
-          holidayEntitlementPercentage: configRecord.holidayEntitlementPercentage,
-          pawwRatePercentage: configRecord.pawwRatePercentage,
-          azvRatePercentage: configRecord.azvRatePercentage,
-          stippRatePercentage: configRecord.stippRatePercentage,
-          wgaRatePercentage: configRecord.wgaRatePercentage,
-          healthInsuranceWeekly: configRecord.healthInsuranceWeekly,
-          additionalInsuranceWeekly: configRecord.additionalInsuranceWeekly,
-          taxEstimationMode: configRecord.taxEstimationMode as any,
-          estimatedTaxRatePercentage: configRecord.estimatedTaxRatePercentage ?? 18.0,
+          effectiveFromWeek: configRow.effectiveFromWeek,
+          effectiveUntilWeek: configRow.effectiveUntilWeek ?? undefined,
+          effectiveFromDate: configRow.effectiveFromDate,
+          baseHourlyRate: configRow.baseHourlyRate,
+          advHourlyRate: configRow.advHourlyRate ?? undefined,
+          advPercentage: configRow.advPercentage ?? undefined,
+          holidayAllowancePercentage: configRow.holidayAllowancePercentage,
+          holidayEntitlementPercentage: configRow.holidayEntitlementPercentage,
+          pawwRatePercentage: configRow.pawwRatePercentage,
+          azvRatePercentage: configRow.azvRatePercentage,
+          stippRatePercentage: configRow.stippRatePercentage,
+          wgaRatePercentage: configRow.wgaRatePercentage,
+          healthInsuranceWeekly: configRow.healthInsuranceWeekly,
+          additionalInsuranceWeekly: configRow.additionalInsuranceWeekly,
+          taxEstimationMode: configRow.taxEstimationMode as any,
+          estimatedTaxRatePercentage: configRow.estimatedTaxRatePercentage ?? undefined,
         }
       : CARRIERE_AH_PROFILE_2026;
 
-    // 5. Run pure payroll calculation engine
-    const gross = calculateGrossPayroll(calculatedSessions, profile);
-    const net = calculateNetPayroll(gross, profile);
+    // Run deterministic payroll calculations
+    const grossResult = calculateGrossPayroll(calculatedSessions, profile);
+    const netResult = calculateNetPayroll(grossResult, profile);
 
-    const paww = net.payrollDeductions.find((d) => d.code === 'PAWW')?.amount ?? new Decimal(0);
-    const azv = net.payrollDeductions.find((d) => d.code === 'AZV')?.amount ?? new Decimal(0);
-    const stipp = net.payrollDeductions.find((d) => d.code === 'STIPP')?.amount ?? new Decimal(0);
-    const wga = net.payrollDeductions.find((d) => d.code === 'WGA')?.amount ?? new Decimal(0);
+    // Upsert payroll_weeks
+    let weekRecord = await db.queryFirst('SELECT id FROM payroll_weeks WHERE year = ? AND weekNumber = ?;', [year, weekNumber]);
+    const now = new Date().toISOString();
+    let weekId: string;
 
-    const calcId = generateId('pc');
-    await db.execute('DELETE FROM payroll_calculations WHERE payrollWeekId = ?;', [payrollWeekId]);
+    if (weekRecord) {
+      weekId = weekRecord.id;
+      await db.execute(
+        `UPDATE payroll_weeks SET updatedAt = ? WHERE id = ?;`,
+        [now, weekId]
+      );
+    } else {
+      weekId = generateId('pw');
+      await db.execute(
+        `INSERT INTO payroll_weeks (id, employmentId, year, weekNumber, startDate, endDate, status, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, 'ESTIMATED', ?, ?);`,
+        [weekId, employment.id, year, weekNumber, startStr, endStr, now, now]
+      );
+    }
+
+    // Upsert payroll_calculations
+    const calcId = generateId('calc');
+    const configSnapshot = JSON.stringify(profile);
+
+    await db.execute('DELETE FROM payroll_calculations WHERE payrollWeekId = ?;', [weekId]);
 
     await db.execute(
       `INSERT INTO payroll_calculations (
          id, payrollWeekId, configSnapshotJson, paidMinutes, paidHours, baseHourlyRate,
-         baseGross, advAllowance, holidayAllowance, holidayEntitlementAccrual, holidayDaysExchange,
-         etExchangeDeduction, totalGross, pawwDeduction, azvDeduction, stippDeduction, wgaDeduction,
-         totalPayrollDeductions, loonSv, estimatedTax, taxAccuracy, netBeforeAdjustments,
-         etExchangeReimbursement, healthInsurance, additionalInsurance, estimatedNet, estimatedBankPayment,
-         createdAt, updatedAt
+         baseGross, advAllowance, holidayAllowance, holidayEntitlementAccrual,
+         holidayDaysExchange, etExchangeDeduction, totalGross, pawwDeduction,
+         azvDeduction, stippDeduction, wgaDeduction, totalPayrollDeductions,
+         loonSv, estimatedTax, taxAccuracy, netBeforeAdjustments,
+         etExchangeReimbursement, healthInsurance, additionalInsurance,
+         estimatedNet, estimatedBankPayment, createdAt, updatedAt
        ) VALUES (
          ?, ?, ?, ?, ?, ?,
-         ?, ?, ?, ?, ?,
-         ?, ?, ?, ?, ?, ?,
-         ?, ?, ?, ?, ?,
-         ?, ?, ?, ?, ?,
-         ?, ?
+         ?, ?, ?, ?,
+         ?, ?, ?, ?,
+         ?, ?, ?, ?,
+         ?, ?, ?, ?,
+         ?, ?, ?,
+         ?, ?, ?, ?
        );`,
       [
-        calcId, payrollWeekId, JSON.stringify(profile), gross.paidMinutes, gross.paidHoursDecimal.toNumber(), profile.baseHourlyRate,
-        gross.baseGross.toNumber(), gross.advAllowance.toNumber(), gross.holidayAllowance.toNumber(), gross.holidayEntitlementAccrual.toNumber(), gross.holidayDaysExchange.toNumber(),
-        gross.etExchangeDeduction.toNumber(), gross.totalGross.toNumber(), paww.toNumber(), azv.toNumber(), stipp.toNumber(), wga.toNumber(),
-        net.totalPayrollDeductions.toNumber(), net.loonSv.toNumber(), net.estimatedTax.toNumber(), net.taxAccuracy, net.netBeforeAdjustments.toNumber(),
-        net.etExchangeReimbursement.toNumber(), net.healthInsurance.toNumber(), net.additionalInsurance.toNumber(), net.estimatedNet.toNumber(), net.estimatedBankPayment.toNumber(),
-        now, now
+        calcId,
+        weekId,
+        configSnapshot,
+        grossResult.paidMinutes,
+        grossResult.paidHoursDecimal.toNumber(),
+        profile.baseHourlyRate,
+        grossResult.baseGross.toNumber(),
+        grossResult.advAllowance.toNumber(),
+        grossResult.holidayAllowance.toNumber(),
+        grossResult.holidayEntitlementAccrual.toNumber(),
+        grossResult.holidayDaysExchange.toNumber(),
+        grossResult.etExchangeDeduction.toNumber(),
+        grossResult.totalGross.toNumber(),
+        netResult.payrollDeductions.find((d) => d.name.includes('PAWW'))?.amount.toNumber() || 0,
+        netResult.payrollDeductions.find((d) => d.name.includes('AZV'))?.amount.toNumber() || 0,
+        netResult.payrollDeductions.find((d) => d.name.includes('StiPP'))?.amount.toNumber() || 0,
+        netResult.payrollDeductions.find((d) => d.name.includes('WGA'))?.amount.toNumber() || 0,
+        netResult.totalPayrollDeductions.toNumber(),
+        netResult.loonSv.toNumber(),
+        netResult.estimatedTax.toNumber(),
+        netResult.taxAccuracy,
+        netResult.netBeforeAdjustments.toNumber(),
+        netResult.etExchangeReimbursement.toNumber(),
+        netResult.healthInsurance.toNumber(),
+        netResult.additionalInsurance.toNumber(),
+        netResult.estimatedNet.toNumber(),
+        netResult.estimatedBankPayment.toNumber(),
+        now,
+        now,
       ]
     );
 
-    return {
-      payrollWeekId,
-      gross,
-      net,
-    };
+    return { weekId, grossResult, netResult };
   },
 
-  async getWeeklyCalculation(targetDate: Date) {
+  async getWeeklyCalculation(targetDate: Date = new Date()) {
     const db = getDatabase();
-    const { year, weekNumber } = getISOWeekBounds(targetDate);
-    const week = await db.queryFirst('SELECT * FROM payroll_weeks WHERE year = ? AND weekNumber = ?;', [year, weekNumber]);
+    const { year, weekNumber, startDate, endDate } = getISOWeekBounds(targetDate);
+
+    const week = await db.queryFirst(
+      'SELECT * FROM payroll_weeks WHERE year = ? AND weekNumber = ?;',
+      [year, weekNumber]
+    );
     if (!week) return null;
 
-    const calc = await db.queryFirst('SELECT * FROM payroll_calculations WHERE payrollWeekId = ?;', [week.id]);
+    const calc = await db.queryFirst(
+      'SELECT * FROM payroll_calculations WHERE payrollWeekId = ?;',
+      [week.id]
+    );
+
     return { week, calculation: calc };
   },
 };

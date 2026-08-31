@@ -1,4 +1,5 @@
 import { getDatabase } from '../db';
+import { dbEvents } from '../events';
 
 export const userRepository = {
   async getProfile() {
@@ -25,6 +26,7 @@ export const userRepository = {
       [updated.name, updated.email, updated.timezone, updated.currency, updated.initialSavings, updated.updatedAt, current.id]
     );
 
+    dbEvents.emit('settings_changed');
     return this.getProfile();
   },
 
@@ -36,5 +38,18 @@ export const userRepository = {
   async listPayrollConfigurations() {
     const db = getDatabase();
     return db.query('SELECT * FROM payroll_configurations ORDER BY effectiveFromWeek ASC;');
+  },
+
+  async getEffectivePayrollConfig(targetDate: Date = new Date()) {
+    const db = getDatabase();
+    const dStr = targetDate.toISOString().substring(0, 10);
+    const config = await db.queryFirst(
+      `SELECT * FROM payroll_configurations
+       WHERE effectiveFromDate <= ? AND (effectiveUntilDate IS NULL OR effectiveUntilDate >= ?)
+       ORDER BY effectiveFromDate DESC LIMIT 1;`,
+      [dStr, dStr]
+    );
+    if (config) return config;
+    return db.queryFirst('SELECT * FROM payroll_configurations WHERE isDefault = 1 LIMIT 1;');
   },
 };

@@ -27,7 +27,7 @@ export async function exportDatabaseToJson(): Promise<PayTrackBackup> {
   const db = getDatabase();
 
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     userProfile: await db.query('SELECT * FROM user_profile;'),
     appSettings: await db.query('SELECT * FROM app_settings;'),
@@ -51,7 +51,7 @@ export async function exportDatabaseToJson(): Promise<PayTrackBackup> {
  * Restores the complete SQLite database from JSON backup inside a single atomic transaction.
  */
 export async function importDatabaseFromJson(backup: PayTrackBackup): Promise<{ success: boolean }> {
-  if (!backup || backup.version !== 1) {
+  if (!backup || (backup.version !== 1 && backup.version !== 2)) {
     throw new Error('Invalid or unsupported backup format');
   }
 
@@ -112,8 +112,21 @@ export async function importDatabaseFromJson(backup: PayTrackBackup): Promise<{ 
     // 4. Shifts & Work
     for (const s of backup.shifts || []) {
       await tx.execute(
-        'INSERT INTO shifts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);',
-        [s.id, s.employmentId, s.date, s.shiftType, s.plannedStart, s.plannedEnd, s.isDayOff, s.notes, s.createdAt, s.updatedAt]
+        'INSERT INTO shifts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);',
+        [
+          s.id,
+          s.employmentId,
+          s.date,
+          s.shiftType,
+          s.plannedStart,
+          s.plannedEnd,
+          s.startAdjustmentMinutes ?? 0,
+          s.expectedActualStart ?? s.plannedStart,
+          s.isDayOff ?? 0,
+          s.notes ?? null,
+          s.createdAt,
+          s.updatedAt,
+        ]
       );
     }
     for (const w of backup.workSessions || []) {
@@ -124,8 +137,18 @@ export async function importDatabaseFromJson(backup: PayTrackBackup): Promise<{ 
     }
     for (const b of backup.workBreaks || []) {
       await tx.execute(
-        'INSERT INTO work_breaks VALUES (?, ?, ?, ?, ?, ?, ?);',
-        [b.id, b.workSessionId, b.type, b.durationMinutes, b.isPaid, b.name, b.createdAt]
+        'INSERT INTO work_breaks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);',
+        [
+          b.id,
+          b.workSessionId,
+          b.type,
+          b.durationMinutes,
+          b.isPaid,
+          b.name ?? null,
+          b.startTime ?? null,
+          b.endTime ?? null,
+          b.createdAt,
+        ]
       );
     }
 

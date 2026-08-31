@@ -28,6 +28,7 @@ import {
   Trash2,
 } from 'lucide-react-native';
 import { financeRepository } from '../../src/database';
+import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatEUR, formatDateShort } from '../../src/lib/formatters';
 import { colors } from '../../src/theme/colors';
 
@@ -50,7 +51,7 @@ export default function FinanceScreen() {
   const [goalCurrentAmount, setGoalCurrentAmount] = useState('');
 
   // Queries
-  const { data: overview, isLoading: overviewLoading } = useQuery({
+  const { data: overview, isLoading: overviewLoading, refetch: refetchOverview } = useQuery({
     queryKey: ['localFinanceOverview'],
     queryFn: () => financeRepository.getMonthlyOverview(),
   });
@@ -60,19 +61,27 @@ export default function FinanceScreen() {
     queryFn: () => financeRepository.listCategories(),
   });
 
-  const { data: expenses } = useQuery({
+  const { data: expenses, refetch: refetchExpenses } = useQuery({
     queryKey: ['localExpenses'],
     queryFn: () => financeRepository.listExpenses(),
   });
 
-  const { data: savingsGoals } = useQuery({
+  const { data: savingsGoals, refetch: refetchGoals } = useQuery({
     queryKey: ['localSavingsGoals'],
     queryFn: () => financeRepository.listSavingsGoals(),
   });
 
-  const { data: forecast } = useQuery({
+  const { data: forecast, refetch: refetchForecast } = useQuery({
     queryKey: ['localFinanceForecast'],
     queryFn: () => financeRepository.getForecast(6),
+  });
+
+  // DB Reactivity on database change + tab focus
+  useDatabaseRefresh(['finance_changed'], () => {
+    refetchOverview();
+    refetchExpenses();
+    refetchGoals();
+    refetchForecast();
   });
 
   // Mutations
