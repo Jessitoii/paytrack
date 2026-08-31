@@ -30,6 +30,7 @@ import {
 } from 'lucide-react-native';
 import { shiftRepository } from '../../src/database';
 import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters';
+import { getCalendarMonthGrid, getMonthYearTitle } from '../../src/lib/calendar';
 import { colors } from '../../src/theme/colors';
 
 const SHIFT_PRESETS = [
@@ -39,11 +40,14 @@ const SHIFT_PRESETS = [
   { label: 'OFF', type: 'OFF', start: '', end: '', isOff: true, icon: Coffee, color: colors.textTertiary },
 ];
 
+const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 export default function ShiftsScreen() {
   const queryClient = useQueryClient();
 
-  const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().substring(0, 10));
+  const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
+  const [currentMonthIndex, setCurrentMonthIndex] = useState(() => new Date().getMonth());
+  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
 
   // Modals
   const [dayModalVisible, setDayModalVisible] = useState(false);
@@ -62,8 +66,9 @@ export default function ShiftsScreen() {
     const d = new Date();
     const day = d.getDay() || 7;
     d.setDate(d.getDate() - day + 1);
-    return d.toISOString().substring(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
+
   const [bulkShifts, setBulkShifts] = useState<Array<{ type: string; isOff: boolean }>>([
     { type: 'AFTERNOON', isOff: false }, // Mon
     { type: 'AFTERNOON', isOff: false }, // Tue
@@ -74,18 +79,16 @@ export default function ShiftsScreen() {
     { type: 'OFF', isOff: true },        // Sun
   ]);
 
-  // Query month range
-  const year = currentMonthDate.getFullYear();
-  const month = currentMonthDate.getMonth();
-  const firstDay = new Date(Date.UTC(year, month, 1));
-  const lastDay = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
+  // Query shifts for current month window (including previous & next month margins)
+  const queryStartDate = `${currentYear}-${String(currentMonthIndex === 0 ? 12 : currentMonthIndex).padStart(2, '0')}-01`;
+  const queryEndDate = `${currentYear}-${String(currentMonthIndex === 11 ? 1 : currentMonthIndex + 2).padStart(2, '0')}-28`;
 
-  const { data: shifts, isLoading, refetch } = useQuery({
-    queryKey: ['localShifts', year, month],
+  const { data: shifts } = useQuery({
+    queryKey: ['localShifts', currentYear, currentMonthIndex],
     queryFn: () =>
       shiftRepository.listShifts({
-        startDate: firstDay,
-        endDate: lastDay,
+        startDate: queryStartDate,
+        endDate: queryEndDate,
       }),
   });
 
@@ -131,29 +134,28 @@ export default function ShiftsScreen() {
     onError: (err: any) => Alert.alert('Copy Error', err.message),
   });
 
-  // Month navigation
+  // Month navigation (handles December -> January year rollover seamlessly)
   const prevMonth = () => {
-    setCurrentMonthDate(new Date(year, month - 1, 1));
+    if (currentMonthIndex === 0) {
+      setCurrentYear((y) => y - 1);
+      setCurrentMonthIndex(11);
+    } else {
+      setCurrentMonthIndex((m) => m - 1);
+    }
   };
+
   const nextMonth = () => {
-    setCurrentMonthDate(new Date(year, month + 1, 1));
+    if (currentMonthIndex === 11) {
+      setCurrentYear((y) => y + 1);
+      setCurrentMonthIndex(0);
+    } else {
+      setCurrentMonthIndex((m) => m + 1);
+    }
   };
-
-  // Calendar Grid Generation (Mon to Sun)
-  const monthName = currentMonthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
-  const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Mon=0, Sun=6
-  const totalDays = lastDay.getDate();
-
-  const calendarCells = [];
-  for (let i = 0; i < startDayOfWeek; i++) {
-    calendarCells.push(null);
-  }
-  for (let day = 1; day <= totalDays; day++) {
-    const d = new Date(Date.UTC(year, month, day));
-    calendarCells.push(d.toISOString().substring(0, 10));
-  }
 
   const todayStr = new Date().toISOString().substring(0, 10);
+  const monthName = getMonthYearTitle(currentYear, currentMonthIndex);
+  const calendarCells = getCalendarMonthGrid(currentYear, currentMonthIndex, todayStr);
 
   // Open Day Edit Modal
   const handleSelectDay = (dateStr: string) => {
@@ -181,7 +183,8 @@ export default function ShiftsScreen() {
 
   // Save Day Shift
   const handleSaveDay = () => {
-    const baseDate = new Date(selectedDate);
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const baseDate = new Date(y, m - 1, d);
 
     let plannedStart: Date | null = null;
     let plannedEnd: Date | null = null;
@@ -203,7 +206,7 @@ export default function ShiftsScreen() {
 
     saveShiftMutation.mutate({
       id: editShiftId || undefined,
-      date: baseDate,
+      date: selectedDate,
       shiftType: editType,
       plannedStart,
       plannedEnd,
@@ -214,12 +217,13 @@ export default function ShiftsScreen() {
 
   // Save Bulk Week
   const handleSaveBulkWeek = () => {
-    const monday = new Date(bulkWeekStart);
-    monday.setHours(0, 0, 0, 0);
+    const [y, m, d] = bulkWeekStart.split('-').map(Number);
+    const monday = new Date(y, m - 1, d);
 
     const weekShiftsPayload = bulkShifts.map((item, idx) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + idx);
+      const shiftDate = new Date(monday);
+      shiftDate.setDate(monday.getDate() + idx);
+      const dateStr = `${shiftDate.getFullYear()}-${String(shiftDate.getMonth() + 1).padStart(2, '0')}-${String(shiftDate.getDate()).padStart(2, '0')}`;
 
       let plannedStart: Date | null = null;
       let plannedEnd: Date | null = null;
@@ -229,16 +233,16 @@ export default function ShiftsScreen() {
         const [sh, sm] = preset.start.split(':').map(Number);
         const [eh, em] = preset.end.split(':').map(Number);
 
-        plannedStart = new Date(d);
+        plannedStart = new Date(shiftDate);
         plannedStart.setHours(sh, sm, 0, 0);
 
-        plannedEnd = new Date(d);
+        plannedEnd = new Date(shiftDate);
         plannedEnd.setHours(eh, em, 0, 0);
         if (eh < sh) plannedEnd.setDate(plannedEnd.getDate() + 1);
       }
 
       return {
-        date: d,
+        date: dateStr,
         shiftType: item.type,
         plannedStart,
         plannedEnd,
@@ -247,12 +251,10 @@ export default function ShiftsScreen() {
     });
 
     bulkSaveMutation.mutate({
-      weekStartDate: monday,
+      weekStartDate: bulkWeekStart,
       shifts: weekShiftsPayload,
     });
   };
-
-  const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -288,10 +290,10 @@ export default function ShiftsScreen() {
 
         {/* 7-Column Calendar Grid */}
         <View style={styles.calendarContainer}>
-          {/* Day Names Row */}
+          {/* Day Names Header (Mon -> Sun) */}
           <View style={styles.dayNamesRow}>
             {DAYS_OF_WEEK.map((dayName, idx) => (
-              <View key={idx} style={styles.dayNameCell}>
+              <View key={dayName} style={styles.dayNameCell}>
                 <Text
                   style={[
                     styles.dayNameText,
@@ -304,16 +306,10 @@ export default function ShiftsScreen() {
             ))}
           </View>
 
-          {/* Calendar Grid Cells */}
+          {/* Grid Cells */}
           <View style={styles.gridCellsContainer}>
-            {calendarCells.map((dateStr, idx) => {
-              if (!dateStr) {
-                return <View key={`empty_${idx}`} style={styles.cellEmpty} />;
-              }
-
-              const dayNum = parseInt(dateStr.split('-')[2], 10);
-              const isToday = dateStr === todayStr;
-              const shift = shifts?.find((s: any) => s.date.substring(0, 10) === dateStr);
+            {calendarCells.map((cell) => {
+              const shift = shifts?.find((s: any) => s.date.substring(0, 10) === cell.dateStr);
 
               let pillBg = colors.cardElevated;
               let pillText = colors.textTertiary;
@@ -336,13 +332,23 @@ export default function ShiftsScreen() {
 
               return (
                 <TouchableOpacity
-                  key={dateStr}
-                  onPress={() => handleSelectDay(dateStr)}
+                  key={cell.dateStr}
+                  onPress={() => handleSelectDay(cell.dateStr)}
                   activeOpacity={0.7}
-                  style={[styles.calendarCell, isToday && styles.calendarCellToday]}
+                  style={[
+                    styles.calendarCell,
+                    !cell.isCurrentMonth && styles.calendarCellOtherMonth,
+                    cell.isToday && styles.calendarCellToday,
+                  ]}
                 >
-                  <Text style={[styles.dayNumText, isToday && styles.dayNumTextToday]}>
-                    {dayNum}
+                  <Text
+                    style={[
+                      styles.dayNumText,
+                      !cell.isCurrentMonth && styles.dayNumTextOtherMonth,
+                      cell.isToday && styles.dayNumTextToday,
+                    ]}
+                  >
+                    {cell.dayNumber}
                   </Text>
 
                   {shift && (
@@ -604,7 +610,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: Platform.OS === 'android' ? 24 : 12,
     paddingBottom: 36,
   },
@@ -656,9 +662,9 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   navArrowButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
@@ -675,18 +681,17 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 12,
+    padding: 10,
     marginBottom: 16,
   },
   dayNamesRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: colors.cardBorder,
   },
   dayNameCell: {
-    flex: 1,
+    width: '14.285%',
     alignItems: 'center',
   },
   dayNameText: {
@@ -697,30 +702,35 @@ const styles = StyleSheet.create({
   gridCellsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginTop: 8,
-  },
-  cellEmpty: {
-    width: '14.28%',
-    height: 64,
+    marginTop: 6,
   },
   calendarCell: {
-    width: '14.28%',
-    height: 64,
-    padding: 3,
+    width: '14.285%',
+    minHeight: 62,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'flex-start',
     borderRadius: 10,
+    marginVertical: 2,
+  },
+  calendarCellOtherMonth: {
+    opacity: 0.35,
   },
   calendarCellToday: {
     backgroundColor: colors.cardElevated,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.primary,
   },
   dayNumText: {
     color: colors.textPrimary,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 3,
+  },
+  dayNumTextOtherMonth: {
+    color: colors.textTertiary,
+    fontWeight: '500',
   },
   dayNumTextToday: {
     color: colors.primaryLight,
@@ -733,7 +743,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   shiftPillText: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
   },
 
