@@ -3,7 +3,8 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -11,5 +12,12 @@
     "declaration": true,
     "outDir": "./dist"
   },
-  "include": ["shared/**/*", "server/**/*", "tests/**/*"]
+  "include": [
+    "nativewind-env.d.ts",
+    "app/**/*",
+    "src/**/*",
+    "shared/**/*",
+    "server/**/*",
+    "tests/**/*"
+  ]
 }
