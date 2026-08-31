@@ -3,9 +3,9 @@ import { View, Text, ScrollView, TouchableOpacity, RefreshControl, Alert } from 
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Clock, TrendingUp, Calendar, ArrowUpRight, ShieldCheck, LogOut } from 'lucide-react-native';
-import { api } from '../../src/services/api.js';
-import { useAuth } from '../../src/context/AuthContext.js';
-import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters.js';
+import { api } from '../../src/services/api';
+import { useAuth } from '../../src/context/AuthContext';
+import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
 
 export default function DashboardScreen() {
   const router = useRouter();

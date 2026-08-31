@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Square, Coffee, Utensils, CheckCircle2, History, AlertCircle } from 'lucide-react-native';
-import { api } from '../../src/services/api.js';
-import { formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters.js';
-import { roundFinishDateTo5Minutes } from '../../shared/time/rounding.js';
+import { api } from '../../src/services/api';
+import { formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
+import { roundFinishDateTo5Minutes } from '../../shared/time/rounding';
 
 export default function WorkTrackingScreen() {
   const queryClient = useQueryClient();

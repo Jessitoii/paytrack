@@ -1,4 +1,4 @@
-import { secureStorage } from './storage.js';
+import { secureStorage } from './storage';
 import Constants from 'expo-constants';
 
 function getBaseUrl(): string {

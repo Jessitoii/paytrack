@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { api, setAuthToken } from '../services/api.js';
-import { secureStorage } from '../services/storage.js';
+import { api, setAuthToken } from '../services/api';
+import { secureStorage } from '../services/storage';
 
 interface UserProfile {
   id: string;

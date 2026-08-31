@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth } from '../../src/context/AuthContext.js';
+import { useAuth } from '../../src/context/AuthContext';
 import { Lock, Mail, User, ShieldCheck, ArrowLeft } from 'lucide-react-native';
 
 export default function RegisterScreen() {

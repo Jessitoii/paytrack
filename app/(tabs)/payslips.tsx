@@ -4,8 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileUp, FileText, CheckCircle, Scale, ShieldAlert, X } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
-import { api } from '../../src/services/api.js';
-import { formatEUR, formatDateShort } from '../../src/lib/formatters.js';
+import { api } from '../../src/services/api';
+import { formatEUR, formatDateShort } from '../../src/lib/formatters';
 
 export default function PayslipsScreen() {
   const queryClient = useQueryClient();

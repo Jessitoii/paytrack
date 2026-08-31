@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Plus, Trash2, Sun, Sunset, Moon, Coffee, X } from 'lucide-react-native';
-import { api } from '../../src/services/api.js';
-import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters.js';
+import { api } from '../../src/services/api';
+import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters';
 
 export default function ShiftsScreen() {
   const queryClient = useQueryClient();

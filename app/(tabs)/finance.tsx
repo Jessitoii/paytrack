@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert, ActivityIndicator } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Wallet, Plus, TrendingUp, Target, Tag, DollarSign, X } from 'lucide-react-native';
-import { api } from '../../src/services/api.js';
-import { formatEUR } from '../../src/lib/formatters.js';
+import { api } from '../../src/services/api';
+import { formatEUR } from '../../src/lib/formatters';
 
 export default function FinanceScreen() {
   const queryClient = useQueryClient();
