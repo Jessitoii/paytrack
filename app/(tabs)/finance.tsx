@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert, ActivityIndicator } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Wallet, Plus, TrendingUp, Target, ArrowUpRight, DollarSign, X } from 'lucide-react-native';
+import { Wallet, Plus, TrendingUp, Target, Tag, DollarSign, X } from 'lucide-react-native';
 import { api } from '../../src/services/api.js';
 import { formatEUR } from '../../src/lib/formatters.js';
 
@@ -14,9 +14,15 @@ export default function FinanceScreen() {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [merchant, setMerchant] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [goalName, setGoalName] = useState('');
   const [goalTarget, setGoalTarget] = useState('');
   const [goalCurrent, setGoalCurrent] = useState('');
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => api.getCategories(),
+  });
 
   const { data: overviewData } = useQuery({
     queryKey: ['overview'],
@@ -38,6 +44,8 @@ export default function FinanceScreen() {
     queryFn: () => api.getForecast(6),
   });
 
+  const categories = categoriesData?.categories || [];
+
   const createExpenseMutation = useMutation({
     mutationFn: (payload: any) => api.createExpense(payload),
     onSuccess: () => {
@@ -47,6 +55,7 @@ export default function FinanceScreen() {
       setAmount('');
       setDescription('');
       setMerchant('');
+      setSelectedCategoryId('');
       Alert.alert('Expense Added', 'Your expense has been saved.');
     },
     onError: (err: any) => Alert.alert('Error', err.message),
@@ -65,14 +74,27 @@ export default function FinanceScreen() {
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
+  const handleOpenAddExpense = () => {
+    if (categories.length > 0 && !selectedCategoryId) {
+      setSelectedCategoryId(categories[0].id);
+    }
+    setExpenseModalVisible(true);
+  };
+
   const handleAddExpense = () => {
     if (!amount || !description) {
       Alert.alert('Validation Error', 'Please enter amount and description');
       return;
     }
 
+    const catId = selectedCategoryId || (categories[0]?.id ?? '');
+    if (!catId) {
+      Alert.alert('Validation Error', 'Please select a valid expense category');
+      return;
+    }
+
     createExpenseMutation.mutate({
-      categoryId: 'default', // Auto assigned or first category
+      categoryId: catId,
       amount: parseFloat(amount),
       date: new Date(),
       description,
@@ -107,7 +129,7 @@ export default function FinanceScreen() {
             <Text className="text-white text-3xl font-extrabold">Finance Engine</Text>
           </View>
           <TouchableOpacity
-            onPress={() => setExpenseModalVisible(true)}
+            onPress={handleOpenAddExpense}
             className="bg-emerald-500 w-11 h-11 rounded-2xl items-center justify-center shadow-lg shadow-emerald-500/20"
           >
             <Plus size={22} color="#090D16" />
@@ -208,7 +230,7 @@ export default function FinanceScreen() {
         </View>
       </ScrollView>
 
-      {/* Add Expense Modal */}
+      {/* Add Expense Modal with Dynamic Category Picker */}
       <Modal visible={expenseModalVisible} animationType="slide" transparent>
         <View className="flex-1 bg-black/80 justify-end">
           <View className="bg-card border-t border-cardBorder rounded-t-3xl p-6">
@@ -218,6 +240,30 @@ export default function FinanceScreen() {
                 <X size={20} color="#9CA3AF" />
               </TouchableOpacity>
             </View>
+
+            {/* Category Selector */}
+            <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Select Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
+              <View className="flex-row gap-2">
+                {categories.map((cat: any) => {
+                  const isSelected = (selectedCategoryId || categories[0]?.id) === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      onPress={() => setSelectedCategoryId(cat.id)}
+                      className={`px-4 py-2.5 rounded-xl border flex-row items-center ${
+                        isSelected ? 'bg-emerald-500/20 border-emerald-500' : 'bg-[#0B0F19] border-gray-800'
+                      }`}
+                    >
+                      <Tag size={14} color={isSelected ? '#10B981' : '#9CA3AF'} />
+                      <Text className={`text-xs font-bold ml-1.5 ${isSelected ? 'text-emerald-400' : 'text-gray-400'}`}>
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Amount (€)</Text>
             <TextInput
@@ -233,7 +279,7 @@ export default function FinanceScreen() {
             <TextInput
               value={description}
               onChangeText={setDescription}
-              placeholder="Groceries / Dining / Fuel"
+              placeholder="Groceries / Fuel / Dining"
               placeholderTextColor="#64748B"
               className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-4"
             />
@@ -252,7 +298,11 @@ export default function FinanceScreen() {
               disabled={createExpenseMutation.isPending}
               className="bg-emerald-500 py-4 rounded-xl items-center"
             >
-              <Text className="text-gray-950 font-bold text-base">Save Expense</Text>
+              {createExpenseMutation.isPending ? (
+                <ActivityIndicator color="#090D16" />
+              ) : (
+                <Text className="text-gray-950 font-bold text-base">Save Expense</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -273,7 +323,7 @@ export default function FinanceScreen() {
             <TextInput
               value={goalName}
               onChangeText={setGoalName}
-              placeholder="e.g. Emergency Fund / Vacation"
+              placeholder="e.g. Emergency Fund / Holiday"
               placeholderTextColor="#64748B"
               className="bg-[#0B0F19] border border-gray-800 rounded-xl p-4 text-white text-base mb-4"
             />

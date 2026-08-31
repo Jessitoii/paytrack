@@ -12,6 +12,16 @@ import { authenticate } from '../../middleware/auth.js';
 export const financeRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', authenticate);
 
+  // Categories
+  fastify.get('/categories', async (request, reply) => {
+    try {
+      const categories = await FinanceService.listCategories(request.userPayload!.userId);
+      return reply.send({ categories });
+    } catch (err: any) {
+      return reply.status(400).send({ statusCode: 400, error: 'Bad Request', message: err.message });
+    }
+  });
+
   // 1. Expenses
   fastify.post('/expenses', async (request, reply) => {
     try {

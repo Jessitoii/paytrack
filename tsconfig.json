@@ -3,7 +3,10 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
@@ -18,6 +21,9 @@
     "src/**/*",
     "shared/**/*",
     "server/**/*",
-    "tests/**/*"
-  ]
+    "tests/**/*",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "extends": "expo/tsconfig.base"
 }

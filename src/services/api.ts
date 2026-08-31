@@ -1,13 +1,15 @@
+import { secureStorage } from './storage.js';
+
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:3000/api';
 
-let authToken: string | null = null;
+let activeAuthToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
-  authToken = token;
+  activeAuthToken = token;
 }
 
 export function getAuthToken(): string | null {
-  return authToken;
+  return activeAuthToken;
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -16,8 +18,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers as Record<string, string>),
   };
 
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
+  const token = activeAuthToken || (await secureStorage.getToken());
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   const response = await fetch(`${BASE_URL}${endpoint}`, {
@@ -28,6 +31,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const data = await response.json();
 
   if (!response.ok) {
+    if (response.status === 401) {
+      await secureStorage.removeToken();
+      activeAuthToken = null;
+    }
     throw new Error(data.message || `API error: ${response.status}`);
   }
 
@@ -36,6 +43,12 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Auth
+  register: (payload: { email: string; password: string; name: string }) =>
+    request<{ user: any; token: string }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   login: (payload: { email: string; password: string }) =>
     request<{ user: any; token: string }>('/auth/login', {
       method: 'POST',
@@ -45,7 +58,7 @@ export const api = {
   getMe: () => request<{ user: any }>('/auth/me'),
 
   // Work Sessions
-  startWork: (payload?: { shiftId?: string; notes?: string }) =>
+  startWork: (payload?: { shiftId?: string; actualStart?: Date; notes?: string }) =>
     request<{ session: any }>('/work/start', {
       method: 'POST',
       body: JSON.stringify(payload ?? {}),
@@ -108,6 +121,8 @@ export const api = {
   listPayslips: () => request<{ payslips: any[] }>('/payslips'),
 
   // Finance
+  getCategories: () => request<{ categories: any[] }>('/finance/categories'),
+
   getOverview: (year?: number, month?: number) => {
     const query = year && month ? `?year=${year}&month=${month}` : '';
     return request<{ overview: any }>(`/finance/overview${query}`);
@@ -116,7 +131,10 @@ export const api = {
   getForecast: (horizonMonths = 6) =>
     request<{ forecast: any }>(`/finance/forecast?horizonMonths=${horizonMonths}`),
 
-  listExpenses: () => request<{ expenses: any[] }>('/finance/expenses'),
+  listExpenses: (params?: { categoryId?: string; startDate?: string; endDate?: string }) => {
+    const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
+    return request<{ expenses: any[] }>(`/finance/expenses${query}`);
+  },
 
   createExpense: (payload: any) =>
     request<{ expense: any }>('/finance/expenses', {

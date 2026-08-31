@@ -1,13 +1,15 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Clock, TrendingUp, Calendar, ArrowUpRight, DollarSign, ShieldCheck } from 'lucide-react-native';
+import { Clock, TrendingUp, Calendar, ArrowUpRight, ShieldCheck, LogOut } from 'lucide-react-native';
 import { api } from '../../src/services/api.js';
+import { useAuth } from '../../src/context/AuthContext.js';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters.js';
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { user, logout } = useAuth();
 
   const { data: workData, isLoading: workLoading, refetch: refetchWork } = useQuery({
     queryKey: ['workSessions'],
@@ -34,21 +36,36 @@ export default function DashboardScreen() {
     refetchFinance();
   };
 
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: () => logout() },
+    ]);
+  };
+
   return (
     <ScrollView
       className="flex-1 bg-[#090D16]"
       contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}
       refreshControl={<RefreshControl refreshing={workLoading} onRefresh={onRefresh} tintColor="#10B981" />}
     >
-      {/* Header */}
+      {/* Header with User Name and Logout button */}
       <View className="flex-row justify-between items-center mb-6">
         <View>
-          <Text className="text-gray-400 text-sm font-medium">Welcome back</Text>
+          <Text className="text-gray-400 text-sm font-medium">Welcome back, {user?.name || 'Worker'}</Text>
           <Text className="text-white text-2xl font-bold">PayTrack</Text>
         </View>
-        <View className="bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-full flex-row items-center">
-          <ShieldCheck size={16} color="#10B981" />
-          <Text className="text-emerald-400 text-xs font-semibold ml-1.5">Albert Heijn / Carrière</Text>
+        <View className="flex-row items-center gap-2">
+          <View className="bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-full flex-row items-center">
+            <ShieldCheck size={16} color="#10B981" />
+            <Text className="text-emerald-400 text-xs font-semibold ml-1.5">AH / Carrière</Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleLogout}
+            className="w-9 h-9 rounded-full bg-card border border-cardBorder items-center justify-center"
+          >
+            <LogOut size={16} color="#9CA3AF" />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -90,7 +107,7 @@ export default function DashboardScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Weekly Payroll Summary Card */}
+      {/* Weekly Payroll Summary Card (Live Calculated from Work Sessions) */}
       <View className="bg-card border border-cardBorder rounded-3xl p-6 mb-6 shadow-sm">
         <View className="flex-row justify-between items-center mb-4">
           <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">This Week's Estimate</Text>
@@ -99,7 +116,7 @@ export default function DashboardScreen() {
 
         <View className="flex-row items-baseline mb-4">
           <Text className="text-white text-4xl font-extrabold">
-            {formatEUR((totalPaidMinutesThisWeek / 60) * 16.35)}
+            {formatEUR((totalPaidMinutesThisWeek / 60) * 16.34)}
           </Text>
           <Text className="text-gray-400 text-sm font-medium ml-2">estimated gross</Text>
         </View>

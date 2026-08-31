@@ -54,9 +54,34 @@ export const updateSavingsGoalSchema = z.object({
 
 export class FinanceService {
   /**
+   * List Categories for user (default system categories + user created categories).
+   */
+  static async listCategories(userId: string) {
+    const categories = await prisma.expenseCategory.findMany({
+      where: {
+        OR: [{ isDefault: true }, { userId }],
+      },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+    });
+    return categories;
+  }
+
+  /**
    * 1. Expenses Management
    */
   static async createExpense(userId: string, input: z.infer<typeof createExpenseSchema>) {
+    // Validate category exists and is accessible by this user
+    const category = await prisma.expenseCategory.findFirst({
+      where: {
+        id: input.categoryId,
+        OR: [{ isDefault: true }, { userId }],
+      },
+    });
+
+    if (!category) {
+      throw new Error('Invalid or unauthorized expense category selected');
+    }
+
     const expense = await prisma.expense.create({
       data: {
         userId,
@@ -98,6 +123,18 @@ export class FinanceService {
   static async updateExpense(userId: string, expenseId: string, input: z.infer<typeof updateExpenseSchema>) {
     const existing = await prisma.expense.findFirst({ where: { id: expenseId, userId } });
     if (!existing) throw new Error('Expense not found or unauthorized');
+
+    if (input.categoryId) {
+      const category = await prisma.expenseCategory.findFirst({
+        where: {
+          id: input.categoryId,
+          OR: [{ isDefault: true }, { userId }],
+        },
+      });
+      if (!category) {
+        throw new Error('Invalid or unauthorized expense category selected');
+      }
+    }
 
     return prisma.expense.update({
       where: { id: expenseId },
