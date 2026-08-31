@@ -47,7 +47,7 @@ export const manualWorkSchema = z.object({
 /**
  * Calculates ISO-8601 week number, year, Monday start date, and Sunday end date.
  */
-function getISOWeekBounds(date: Date): { year: number; weekNumber: number; startDate: Date; endDate: Date } {
+export function getISOWeekBounds(date: Date): { year: number; weekNumber: number; startDate: Date; endDate: Date } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
@@ -257,7 +257,7 @@ export class WorkService {
     });
     if (existingActive) {
       throw new Error(
-        'An active work session is already in progress. Please finish your active session before starting a new one.'
+        `An active work session is already in progress since ${existingActive.actualStart.toISOString().substring(11, 16)}. Please finish your active session before starting a new one.`
       );
     }
 
@@ -282,7 +282,7 @@ export class WorkService {
   }
 
   /**
-   * 1-Tap Finish Work with 5-minute upward rounding & deterministic break calculation.
+   * Finish Work with customized finish time, breaks, and 5-minute upward rounding.
    */
   static async finishWork(userId: string, sessionId: string, input: z.infer<typeof finishWorkSchema>) {
     const session = await prisma.workSession.findFirst({
@@ -304,18 +304,20 @@ export class WorkService {
     }
     const roundedFinish = roundFinishDateTo5Minutes(rawFinish);
 
-    // If breaks provided in finish payload, replace or add them
-    if (input.breaks && input.breaks.length > 0) {
+    // If breaks provided in finish payload, replace them
+    if (input.breaks) {
       await prisma.workBreak.deleteMany({ where: { workSessionId: sessionId } });
-      await prisma.workBreak.createMany({
-        data: input.breaks.map((b) => ({
-          workSessionId: sessionId,
-          type: b.type,
-          durationMinutes: b.durationMinutes,
-          isPaid: b.isPaid,
-          name: b.name,
-        })),
-      });
+      if (input.breaks.length > 0) {
+        await prisma.workBreak.createMany({
+          data: input.breaks.map((b) => ({
+            workSessionId: sessionId,
+            type: b.type,
+            durationMinutes: b.durationMinutes,
+            isPaid: b.isPaid,
+            name: b.name,
+          })),
+        });
+      }
     }
 
     // Retrieve active breaks for calculation
@@ -475,7 +477,7 @@ export class WorkService {
   }
 
   /**
-   * Update work session with automatic recalculation of derived cache fields and weekly aggregation.
+   * Update work session with automatic recalculation of derived cache fields and cross-week aggregation.
    */
   static async updateWork(userId: string, sessionId: string, input: z.infer<typeof updateWorkSchema>) {
     const session = await prisma.workSession.findFirst({
@@ -489,19 +491,26 @@ export class WorkService {
 
     const actualStart = input.actualStart ?? session.actualStart;
     const rawFinish = input.rawFinish !== undefined ? input.rawFinish : session.rawFinish;
+
+    if (rawFinish && rawFinish.getTime() < actualStart.getTime()) {
+      throw new Error('Finish timestamp cannot be earlier than start timestamp');
+    }
+
     const roundedFinish = rawFinish ? roundFinishDateTo5Minutes(rawFinish) : null;
 
     if (input.breaks) {
       await prisma.workBreak.deleteMany({ where: { workSessionId: sessionId } });
-      await prisma.workBreak.createMany({
-        data: input.breaks.map((b) => ({
-          workSessionId: sessionId,
-          type: b.type,
-          durationMinutes: b.durationMinutes,
-          isPaid: b.isPaid,
-          name: b.name,
-        })),
-      });
+      if (input.breaks.length > 0) {
+        await prisma.workBreak.createMany({
+          data: input.breaks.map((b) => ({
+            workSessionId: sessionId,
+            type: b.type,
+            durationMinutes: b.durationMinutes,
+            isPaid: b.isPaid,
+            name: b.name,
+          })),
+        });
+      }
     }
 
     const allBreaks = await prisma.workBreak.findMany({ where: { workSessionId: sessionId } });
@@ -532,7 +541,7 @@ export class WorkService {
         roundedFinish,
         elapsedMinutes,
         paidMinutes,
-        status: input.status ?? (rawFinish ? 'EDITED' : session.status),
+        status: input.status ?? (rawFinish ? 'COMPLETED' : session.status),
         isManualEntry: true,
         notes: input.notes !== undefined ? input.notes : session.notes,
       },
@@ -542,7 +551,13 @@ export class WorkService {
       },
     });
 
-    // Trigger Live Weekly Estimate Aggregation
+    // Cross-week reaggregation support
+    const oldBounds = getISOWeekBounds(session.actualStart);
+    const newBounds = getISOWeekBounds(actualStart);
+
+    if (oldBounds.year !== newBounds.year || oldBounds.weekNumber !== newBounds.weekNumber) {
+      await this.aggregateWeeklyCalculation(userId, session.actualStart);
+    }
     await this.aggregateWeeklyCalculation(userId, actualStart);
 
     return {
@@ -617,7 +632,7 @@ export class WorkService {
   }
 
   /**
-   * Delete work session.
+   * Delete work session with automatic weekly estimate recalculation.
    */
   static async deleteWorkSession(userId: string, sessionId: string) {
     const session = await prisma.workSession.findFirst({

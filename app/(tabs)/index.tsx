@@ -66,8 +66,25 @@ export default function DashboardScreen() {
   const completedSessions = workData?.sessions?.filter((s: any) => s.status !== 'WORKING') || [];
   const latestCompleted = completedSessions[0];
 
+  // Calculate Current ISO Week bounds strictly
+  const now = new Date();
+  const currentDay = now.getDay() || 7;
+  const currentMon = new Date(now);
+  currentMon.setDate(now.getDate() - currentDay + 1);
+  currentMon.setHours(0, 0, 0, 0);
+  const currentSun = new Date(currentMon);
+  currentSun.setDate(currentMon.getDate() + 6);
+  currentSun.setHours(23, 59, 59, 999);
+
   const totalPaidMinutesThisWeek =
-    workData?.sessions?.reduce((acc: number, s: any) => acc + (s.paidMinutes || 0), 0) || 0;
+    workData?.sessions?.reduce((acc: number, s: any) => {
+      if (s.status !== 'COMPLETED' && s.status !== 'EDITED') return acc;
+      const sDate = new Date(s.actualStart);
+      if (sDate >= currentMon && sDate <= currentSun) {
+        return acc + (s.paidMinutes || 0);
+      }
+      return acc;
+    }, 0) || 0;
 
   const todayStr = new Date().toISOString().substring(0, 10);
   const todayShift = shiftsData?.shifts?.find(

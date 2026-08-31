@@ -123,67 +123,7 @@ async function main() {
     },
   });
 
-  // 6. Sample Planned Shifts
-  const mondayShift = await prisma.shift.create({
-    data: {
-      userId: user.id,
-      employmentId: employment.id,
-      date: new Date('2026-08-17'),
-      shiftType: 'AFTERNOON',
-      plannedStart: new Date('2026-08-17T14:30:00'),
-      plannedEnd: new Date('2026-08-17T23:00:00'),
-      isDayOff: false,
-      notes: 'Afternoon rotation shift',
-    },
-  });
-
-  await prisma.shift.create({
-    data: {
-      userId: user.id,
-      employmentId: employment.id,
-      date: new Date('2026-08-18'),
-      shiftType: 'AFTERNOON',
-      plannedStart: new Date('2026-08-18T14:30:00'),
-      plannedEnd: new Date('2026-08-18T23:00:00'),
-      isDayOff: false,
-    },
-  });
-
-  // 7. Completed Sample Work Session (with 5-minute upward rounded finish)
-  const session = await prisma.workSession.create({
-    data: {
-      userId: user.id,
-      shiftId: mondayShift.id,
-      actualStart: new Date('2026-08-17T14:30:00'),
-      rawFinish: new Date('2026-08-17T23:23:00'), // Raw logout
-      roundedFinish: new Date('2026-08-17T23:25:00'), // 5-min ceiling rounded
-      elapsedMinutes: 535, // 8h 55m
-      paidMinutes: 505, // 8h 25m (minus 30m unpaid break)
-      status: 'COMPLETED',
-      isManualEntry: false,
-    },
-  });
-
-  await prisma.workBreak.createMany({
-    data: [
-      {
-        workSessionId: session.id,
-        type: 'PAID_15',
-        durationMinutes: 15,
-        isPaid: true,
-        name: 'Morning paid coffee break',
-      },
-      {
-        workSessionId: session.id,
-        type: 'UNPAID_30',
-        durationMinutes: 30,
-        isPaid: false,
-        name: 'Meal break (unpaid)',
-      },
-    ],
-  });
-
-  // 8. Sample Savings Goal
+  // 6. Sample Savings Goal (No dummy shifts or work sessions, starting clean)
   await prisma.savingsGoal.create({
     data: {
       userId: user.id,
@@ -196,7 +136,7 @@ async function main() {
     },
   });
 
-  console.log('Database seeded successfully!');
+  console.log('Database seeded cleanly without dummy shifts/sessions!');
 }
 
 main()
