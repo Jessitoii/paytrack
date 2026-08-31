@@ -241,6 +241,14 @@ export class WorkService {
    * 1-Tap Start Work.
    */
   static async startWork(userId: string, input: z.infer<typeof startWorkSchema>) {
+    // Production Guard: Prevent duplicate active session
+    const existingActive = await prisma.workSession.findFirst({
+      where: { userId, status: 'WORKING' },
+    });
+    if (existingActive) {
+      throw new Error('An active work session is already in progress. Please finish your active session before starting a new one.');
+    }
+
     const actualStart = input.actualStart ?? new Date();
 
     const session = await prisma.workSession.create({
@@ -274,7 +282,14 @@ export class WorkService {
       throw new Error('Work session not found or unauthorized');
     }
 
+    if (session.status !== 'WORKING') {
+      throw new Error('This work session has already been completed or is not active');
+    }
+
     const rawFinish = input.rawFinish ?? new Date();
+    if (rawFinish.getTime() < session.actualStart.getTime()) {
+      throw new Error('Finish timestamp cannot be earlier than start timestamp');
+    }
     const roundedFinish = roundFinishDateTo5Minutes(rawFinish);
 
     // If breaks provided in finish payload, replace or add them

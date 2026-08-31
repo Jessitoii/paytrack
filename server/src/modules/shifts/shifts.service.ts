@@ -27,7 +27,14 @@ export class ShiftsService {
   static async createShift(userId: string, input: z.infer<typeof createShiftSchema>) {
     let employmentId = input.employmentId;
 
-    if (!employmentId) {
+    if (employmentId) {
+      const userEmployment = await prisma.employment.findFirst({
+        where: { id: employmentId, userId },
+      });
+      if (!userEmployment) {
+        throw new Error('Employment profile not found or unauthorized');
+      }
+    } else {
       const activeEmployment = await prisma.employment.findFirst({
         where: { userId, isActive: true },
       });

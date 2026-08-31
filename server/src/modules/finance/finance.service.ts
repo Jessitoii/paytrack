@@ -161,6 +161,17 @@ export class FinanceService {
    * 2. Recurring Expenses
    */
   static async createRecurringExpense(userId: string, input: z.infer<typeof createRecurringExpenseSchema>) {
+    const category = await prisma.expenseCategory.findFirst({
+      where: {
+        id: input.categoryId,
+        OR: [{ isDefault: true }, { userId }],
+      },
+    });
+
+    if (!category) {
+      throw new Error('Invalid or unauthorized expense category selected');
+    }
+
     return prisma.recurringExpense.create({
       data: {
         userId,
