@@ -4,6 +4,7 @@ import {
   startWorkSchema,
   finishWorkSchema,
   updateWorkSchema,
+  manualWorkSchema,
 } from './work.service.js';
 import { authenticate } from '../../middleware/auth.js';
 
@@ -21,6 +22,35 @@ export const workRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(400).send({
         statusCode: 400,
         error: 'Bad Request',
+        message: err.message,
+      });
+    }
+  });
+
+  // POST /api/work/manual (Add Past Manual Work Session)
+  fastify.post('/manual', async (request, reply) => {
+    try {
+      const body = manualWorkSchema.parse(request.body ?? {});
+      const result = await WorkService.createManualWorkSession(request.userPayload!.userId, body);
+      return reply.status(201).send(result);
+    } catch (err: any) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+  });
+
+  // GET /api/work/auto-start-check (Reconciliation hook for mobile app launch/focus)
+  fastify.get('/auto-start-check', async (request, reply) => {
+    try {
+      const autoStarted = await WorkService.checkAndTriggerAutoStarts(request.userPayload!.userId);
+      return reply.send({ autoStartedCount: autoStarted.length, autoStarted });
+    } catch (err: any) {
+      return reply.status(500).send({
+        statusCode: 500,
+        error: 'Internal Server Error',
         message: err.message,
       });
     }

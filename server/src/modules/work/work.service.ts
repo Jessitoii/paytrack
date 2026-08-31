@@ -36,6 +36,14 @@ export const updateWorkSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+export const manualWorkSchema = z.object({
+  shiftId: z.string().optional(),
+  actualStart: z.coerce.date(),
+  rawFinish: z.coerce.date(),
+  breaks: z.array(breakInputSchema).optional(),
+  notes: z.string().optional(),
+});
+
 /**
  * Calculates ISO-8601 week number, year, Monday start date, and Sunday end date.
  */
@@ -158,7 +166,9 @@ export class WorkService {
           healthInsuranceWeekly: configRecord.healthInsuranceWeekly.toNumber(),
           additionalInsuranceWeekly: configRecord.additionalInsuranceWeekly.toNumber(),
           taxEstimationMode: configRecord.taxEstimationMode as any,
-          estimatedTaxRatePercentage: configRecord.estimatedTaxRatePercentage ? configRecord.estimatedTaxRatePercentage.toNumber() : 18.0,
+          estimatedTaxRatePercentage: configRecord.estimatedTaxRatePercentage
+            ? configRecord.estimatedTaxRatePercentage.toNumber()
+            : 18.0,
         }
       : CARRIERE_AH_PROFILE_2026;
 
@@ -238,7 +248,7 @@ export class WorkService {
   }
 
   /**
-   * 1-Tap Start Work.
+   * 1-Tap Start Work with duplicate protection.
    */
   static async startWork(userId: string, input: z.infer<typeof startWorkSchema>) {
     // Production Guard: Prevent duplicate active session
@@ -246,7 +256,9 @@ export class WorkService {
       where: { userId, status: 'WORKING' },
     });
     if (existingActive) {
-      throw new Error('An active work session is already in progress. Please finish your active session before starting a new one.');
+      throw new Error(
+        'An active work session is already in progress. Please finish your active session before starting a new one.'
+      );
     }
 
     const actualStart = input.actualStart ?? new Date();
@@ -335,13 +347,131 @@ export class WorkService {
       },
     });
 
-    // Trigger Live Weekly Estimate Aggregation in background/synchronously
+    // Trigger Live Weekly Estimate Aggregation
     await this.aggregateWeeklyCalculation(userId, session.actualStart);
 
     return {
       session: updated,
       calculation,
     };
+  }
+
+  /**
+   * Create Manual Past Work Session.
+   */
+  static async createManualWorkSession(userId: string, input: z.infer<typeof manualWorkSchema>) {
+    if (input.rawFinish.getTime() < input.actualStart.getTime()) {
+      throw new Error('Finish timestamp cannot be earlier than start timestamp');
+    }
+
+    const roundedFinish = roundFinishDateTo5Minutes(input.rawFinish);
+
+    const domainBreaks: TimeBreak[] = (input.breaks || []).map((b) => ({
+      id: 'temp',
+      type: b.type.toLowerCase() as any,
+      durationMinutes: b.durationMinutes,
+      isPaid: b.isPaid,
+      name: b.name ?? undefined,
+    }));
+
+    const calculation = calculateWorkSession(input.actualStart, input.rawFinish, domainBreaks);
+
+    const session = await prisma.workSession.create({
+      data: {
+        userId,
+        shiftId: input.shiftId,
+        actualStart: input.actualStart,
+        rawFinish: input.rawFinish,
+        roundedFinish,
+        elapsedMinutes: calculation.elapsedMinutes,
+        paidMinutes: calculation.paidMinutes,
+        status: 'COMPLETED',
+        isManualEntry: true,
+        notes: input.notes,
+        breaks: {
+          create: (input.breaks || []).map((b) => ({
+            type: b.type,
+            durationMinutes: b.durationMinutes,
+            isPaid: b.isPaid,
+            name: b.name,
+          })),
+        },
+      },
+      include: {
+        breaks: true,
+        shift: true,
+      },
+    });
+
+    // Update weekly payroll aggregation
+    await this.aggregateWeeklyCalculation(userId, input.actualStart);
+
+    return {
+      session,
+      calculation,
+    };
+  }
+
+  /**
+   * Auto-start background & app-launch engine:
+   * Checks planned shifts whose plannedStart <= now, no session active, and starts them automatically.
+   */
+  static async checkAndTriggerAutoStarts(specificUserId?: string) {
+    const now = new Date();
+
+    const whereUser = specificUserId ? { userId: specificUserId } : {};
+
+    // Find planned shifts starting up to now, not marked as day off
+    const shiftsToStart = await prisma.shift.findMany({
+      where: {
+        ...whereUser,
+        isDayOff: false,
+        plannedStart: { lte: now },
+        // Only consider shifts today or recent past 24h
+        date: {
+          gte: new Date(now.getTime() - 24 * 60 * 60 * 1000),
+          lte: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        },
+      },
+      include: {
+        workSessions: true,
+      },
+    });
+
+    const autoStartedSessions = [];
+
+    for (const shift of shiftsToStart) {
+      if (!shift.plannedStart) continue;
+
+      // 1. Check if shift already has an associated WorkSession
+      if (shift.workSessions.length > 0) continue;
+
+      // 2. Check if user already has an active session
+      const userActiveSession = await prisma.workSession.findFirst({
+        where: { userId: shift.userId, status: 'WORKING' },
+      });
+      if (userActiveSession) continue;
+
+      // 3. Atomically create auto-started session anchored to exact plannedStart
+      const session = await prisma.workSession.create({
+        data: {
+          userId: shift.userId,
+          shiftId: shift.id,
+          actualStart: shift.plannedStart,
+          status: 'WORKING',
+          isManualEntry: false,
+          notes: `Auto-started from planned ${shift.shiftType} shift`,
+        },
+        include: {
+          breaks: true,
+          shift: true,
+        },
+      });
+
+      autoStartedSessions.push(session);
+    }
+
+    return autoStartedSessions;
   }
 
   /**

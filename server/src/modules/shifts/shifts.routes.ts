@@ -3,18 +3,50 @@ import {
   ShiftsService,
   createShiftSchema,
   updateShiftSchema,
+  bulkSaveWeekSchema,
+  copyPreviousWeekSchema,
 } from './shifts.service.js';
 import { authenticate } from '../../middleware/auth.js';
 
 export const shiftsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', authenticate);
 
-  // POST /api/shifts
+  // POST /api/shifts (Single shift)
   fastify.post('/', async (request, reply) => {
     try {
       const body = createShiftSchema.parse(request.body);
       const shift = await ShiftsService.createShift(request.userPayload!.userId, body);
       return reply.status(201).send({ shift });
+    } catch (err: any) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+  });
+
+  // POST /api/shifts/bulk-week (Atomic entire week save Mon-Sun)
+  fastify.post('/bulk-week', async (request, reply) => {
+    try {
+      const body = bulkSaveWeekSchema.parse(request.body);
+      const shifts = await ShiftsService.bulkSaveWeek(request.userPayload!.userId, body);
+      return reply.status(200).send({ shifts });
+    } catch (err: any) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+  });
+
+  // POST /api/shifts/copy-previous-week (Atomic week duplicate)
+  fastify.post('/copy-previous-week', async (request, reply) => {
+    try {
+      const body = copyPreviousWeekSchema.parse(request.body);
+      const shifts = await ShiftsService.copyPreviousWeek(request.userPayload!.userId, body);
+      return reply.status(200).send({ shifts });
     } catch (err: any) {
       return reply.status(400).send({
         statusCode: 400,

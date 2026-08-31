@@ -4,12 +4,15 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  TextInput,
+  Modal,
   Alert,
   StyleSheet,
   SafeAreaView,
   Platform,
   StatusBar,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -20,8 +23,10 @@ import {
   Clock,
   Coins,
   History,
-  ShieldCheck,
+  Plus,
+  X,
   CheckCircle2,
+  Calendar,
 } from 'lucide-react-native';
 import { api } from '../../src/services/api';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
@@ -32,6 +37,15 @@ export default function TrackWorkScreen() {
 
   const [hasPaid15, setHasPaid15] = useState(true);
   const [hasUnpaid30, setHasUnpaid30] = useState(true);
+
+  // Manual Session Modal State
+  const [manualModalVisible, setManualModalVisible] = useState(false);
+  const [manualDateStr, setManualDateStr] = useState(new Date().toISOString().substring(0, 10));
+  const [manualStartTime, setManualStartTime] = useState('14:30');
+  const [manualFinishTime, setManualFinishTime] = useState('23:00');
+  const [manualPaid15, setManualPaid15] = useState(true);
+  const [manualUnpaid30, setManualUnpaid30] = useState(true);
+  const [manualNotes, setManualNotes] = useState('Manual past session entry');
 
   const { data: workData, isLoading, refetch } = useQuery({
     queryKey: ['workSessions'],
@@ -72,25 +86,73 @@ export default function TrackWorkScreen() {
     onError: (err: any) => Alert.alert('Error', err.message),
   });
 
+  const manualWorkMutation = useMutation({
+    mutationFn: (payload: any) => api.createManualWork(payload),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['workSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['overview'] });
+      setManualModalVisible(false);
+      Alert.alert(
+        'Manual Session Saved',
+        `Recorded ${formatMinutes(data.calculation.paidMinutes)} paid time.\n5-Min Rounding Ceiling: ${formatTimeHHMM(data.session.roundedFinish)}`
+      );
+    },
+    onError: (err: any) => Alert.alert('Error', err.message),
+  });
+
+  const handleSaveManualSession = () => {
+    const [sh, sm] = manualStartTime.split(':').map(Number);
+    const [eh, em] = manualFinishTime.split(':').map(Number);
+
+    const baseDate = new Date(manualDateStr);
+
+    const actualStart = new Date(baseDate);
+    actualStart.setHours(sh || 14, sm || 30, 0, 0);
+
+    const rawFinish = new Date(baseDate);
+    rawFinish.setHours(eh || 23, em || 0, 0, 0);
+
+    if (eh < sh) {
+      rawFinish.setDate(rawFinish.getDate() + 1);
+    }
+
+    const breaks = [];
+    if (manualPaid15) {
+      breaks.push({ type: 'PAID_15', durationMinutes: 15, isPaid: true, name: '15m Paid Break' });
+    }
+    if (manualUnpaid30) {
+      breaks.push({ type: 'UNPAID_30', durationMinutes: 30, isPaid: false, name: '30m Unpaid Break' });
+    }
+
+    manualWorkMutation.mutate({
+      actualStart,
+      rawFinish,
+      breaks,
+      notes: manualNotes || undefined,
+    });
+  };
+
   const totalPaidMinutesThisWeek =
     workData?.sessions?.reduce((acc: number, s: any) => acc + (s.paidMinutes || 0), 0) || 0;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.contentContainer}
-      >
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         {/* Header */}
         <View style={styles.header}>
           <View>
             <Text style={styles.headerSubtitle}>Real-Time Tracking</Text>
             <Text style={styles.headerTitle}>Track Work</Text>
           </View>
-          <View style={styles.roundingBadge}>
-            <Text style={styles.roundingBadgeText}>5-Min Upward Rounding</Text>
-          </View>
+          <TouchableOpacity
+            onPress={() => setManualModalVisible(true)}
+            activeOpacity={0.8}
+            style={styles.manualEntryButton}
+          >
+            <Plus size={15} color={colors.textPrimary} />
+            <Text style={styles.manualEntryButtonText}>Add Manual</Text>
+          </TouchableOpacity>
         </View>
 
         {/* 1. Main Work Status Hero Card */}
@@ -116,7 +178,7 @@ export default function TrackWorkScreen() {
             </Text>
           )}
 
-          {/* Break Selection Switches (Visible while working or configuring) */}
+          {/* Break Selection Switches */}
           <View style={styles.breakControlsSection}>
             <Text style={styles.breakSectionTitle}>SELECT SHIFT BREAKS</Text>
             <View style={styles.breakButtonsRow}>
@@ -137,7 +199,9 @@ export default function TrackWorkScreen() {
                 style={[styles.breakButton, hasUnpaid30 && styles.breakButtonActive]}
               >
                 <Utensils size={16} color={hasUnpaid30 ? colors.amber : colors.textTertiary} />
-                <Text style={[styles.breakButtonText, hasUnpaid30 && styles.breakButtonTextActiveAmber]}>
+                <Text
+                  style={[styles.breakButtonText, hasUnpaid30 && styles.breakButtonTextActiveAmber]}
+                >
                   30m Meal (Unpaid)
                 </Text>
               </TouchableOpacity>
@@ -241,6 +305,117 @@ export default function TrackWorkScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Add Manual Work Session Modal */}
+      <Modal visible={manualModalVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Add Past Work Session</Text>
+                <Text style={styles.modalSubtitle}>
+                  Calculates 5-min ceiling rounding & payroll
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setManualModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <X size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>DATE (YYYY-MM-DD)</Text>
+            <TextInput
+              value={manualDateStr}
+              onChangeText={setManualDateStr}
+              placeholder="2026-08-24"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
+            />
+
+            <View style={styles.timeInputsRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>EXACT START (HH:MM)</Text>
+                <TextInput
+                  value={manualStartTime}
+                  onChangeText={setManualStartTime}
+                  placeholder="14:37"
+                  placeholderTextColor={colors.textTertiary}
+                  style={styles.textInput}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>EXACT FINISH (HH:MM)</Text>
+                <TextInput
+                  value={manualFinishTime}
+                  onChangeText={setManualFinishTime}
+                  placeholder="23:21"
+                  placeholderTextColor={colors.textTertiary}
+                  style={styles.textInput}
+                />
+              </View>
+            </View>
+
+            {/* Break Toggles */}
+            <Text style={styles.inputLabel}>DEDUCTED BREAKS</Text>
+            <View style={styles.breakButtonsRow}>
+              <TouchableOpacity
+                onPress={() => setManualPaid15(!manualPaid15)}
+                style={[styles.breakButton, manualPaid15 && styles.breakButtonActive]}
+              >
+                <Coffee size={15} color={manualPaid15 ? colors.primary : colors.textTertiary} />
+                <Text style={[styles.breakButtonText, manualPaid15 && styles.breakButtonTextActive]}>
+                  15m Paid Break
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setManualUnpaid30(!manualUnpaid30)}
+                style={[styles.breakButton, manualUnpaid30 && styles.breakButtonActive]}
+              >
+                <Utensils
+                  size={15}
+                  color={manualUnpaid30 ? colors.amber : colors.textTertiary}
+                />
+                <Text
+                  style={[
+                    styles.breakButtonText,
+                    manualUnpaid30 && styles.breakButtonTextActiveAmber,
+                  ]}
+                >
+                  30m Meal (Unpaid)
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.inputLabel, { marginTop: 14 }]}>NOTES (OPTIONAL)</Text>
+            <TextInput
+              value={manualNotes}
+              onChangeText={setManualNotes}
+              placeholder="e.g. Forgot to clock out"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.textInput}
+            />
+
+            <TouchableOpacity
+              onPress={handleSaveManualSession}
+              disabled={manualWorkMutation.isPending}
+              activeOpacity={0.85}
+              style={styles.saveManualButton}
+            >
+              {manualWorkMutation.isPending ? (
+                <ActivityIndicator color={colors.textInverse} />
+              ) : (
+                <Text style={styles.saveManualButtonText}>Save Manual Session</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -275,17 +450,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
-  roundingBadge: {
-    backgroundColor: colors.primaryBg,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+  manualEntryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 12,
+    gap: 5,
   },
-  roundingBadgeText: {
-    color: colors.primaryLight,
-    fontSize: 11,
+  manualEntryButtonText: {
+    color: colors.textPrimary,
+    fontSize: 12,
     fontWeight: '700',
   },
 
@@ -550,5 +728,80 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
     fontSize: 12,
     fontWeight: '500',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.cardElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  textInput: {
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 14,
+  },
+  timeInputsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  saveManualButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  saveManualButtonText: {
+    color: colors.textInverse,
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

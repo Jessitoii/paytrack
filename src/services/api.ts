@@ -86,6 +86,21 @@ export const api = {
       body: JSON.stringify(payload ?? {}),
     }),
 
+  createManualWork: (payload: {
+    shiftId?: string;
+    actualStart: Date;
+    rawFinish: Date;
+    breaks?: any[];
+    notes?: string;
+  }) =>
+    request<{ session: any; calculation: any }>('/work/manual', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  checkAutoStart: () =>
+    request<{ autoStartedCount: number; autoStarted: any[] }>('/work/auto-start-check'),
+
   updateWork: (id: string, payload: any) =>
     request<{ session: any; calculation: any }>(`/work/${id}`, {
       method: 'PATCH',
@@ -107,6 +122,18 @@ export const api = {
 
   createShift: (payload: any) =>
     request<{ shift: any }>('/shifts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  bulkSaveWeek: (payload: { weekStartDate: Date; shifts: any[] }) =>
+    request<{ shifts: any[] }>('/shifts/bulk-week', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  copyPreviousWeek: (payload: { targetWeekStartDate: Date }) =>
+    request<{ shifts: any[] }>('/shifts/copy-previous-week', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

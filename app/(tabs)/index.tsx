@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Clock,
   TrendingUp,
@@ -23,7 +23,9 @@ import {
   Play,
   CheckCircle2,
   Wallet,
-  Coins,
+  AlertTriangle,
+  ArrowRight,
+  Zap,
 } from 'lucide-react-native';
 import { api } from '../../src/services/api';
 import { useAuth } from '../../src/context/AuthContext';
@@ -32,7 +34,18 @@ import { colors } from '../../src/theme/colors';
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, logout } = useAuth();
+
+  // Auto-Start Check & Reconciliation on Mount
+  useEffect(() => {
+    api.checkAutoStart().then((res) => {
+      if (res.autoStartedCount > 0) {
+        queryClient.invalidateQueries({ queryKey: ['workSessions'] });
+        queryClient.invalidateQueries({ queryKey: ['overview'] });
+      }
+    }).catch(() => {});
+  }, []);
 
   const { data: workData, isLoading: workLoading, refetch: refetchWork } = useQuery({
     queryKey: ['workSessions'],
@@ -50,14 +63,26 @@ export default function DashboardScreen() {
   });
 
   const activeSession = workData?.sessions?.find((s: any) => s.status === 'WORKING');
+  const completedSessions = workData?.sessions?.filter((s: any) => s.status !== 'WORKING') || [];
+  const latestCompleted = completedSessions[0];
+
   const totalPaidMinutesThisWeek =
     workData?.sessions?.reduce((acc: number, s: any) => acc + (s.paidMinutes || 0), 0) || 0;
-  const nextShift = shiftsData?.shifts?.[0];
+
+  const todayStr = new Date().toISOString().substring(0, 10);
+  const todayShift = shiftsData?.shifts?.find(
+    (s: any) => new Date(s.date).toISOString().substring(0, 10) === todayStr
+  );
+  const nextShift = shiftsData?.shifts?.find(
+    (s: any) => new Date(s.date).toISOString().substring(0, 10) >= todayStr
+  );
 
   const onRefresh = () => {
-    refetchWork();
-    refetchShifts();
-    refetchFinance();
+    api.checkAutoStart().finally(() => {
+      refetchWork();
+      refetchShifts();
+      refetchFinance();
+    });
   };
 
   const handleLogout = () => {
@@ -73,6 +98,11 @@ export default function DashboardScreen() {
     currentHour < 12 ? 'Good morning' : currentHour < 18 ? 'Good afternoon' : 'Good evening';
 
   const estimatedGross = (totalPaidMinutesThisWeek / 60) * 16.34;
+
+  // Check if active session is overdue (>8h)
+  const isOverdue =
+    activeSession &&
+    Date.now() - new Date(activeSession.actualStart).getTime() > 8 * 60 * 60 * 1000;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -102,24 +132,30 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* 1. Active Work Status / Quick Punch Card */}
+        {/* 1. Active Work Status / Overdue Notice / Quick Punch Card */}
         {activeSession ? (
           <TouchableOpacity
             onPress={() => router.push('/(tabs)/work' as any)}
             activeOpacity={0.85}
-            style={styles.activeWorkCard}
+            style={[styles.activeWorkCard, isOverdue && styles.activeWorkCardOverdue]}
           >
             <View style={styles.cardHeaderRow}>
               <View style={styles.liveIndicatorRow}>
-                <View style={styles.livePulseDot} />
-                <Text style={styles.liveIndicatorText}>SHIFT IN PROGRESS</Text>
+                <View style={[styles.livePulseDot, isOverdue && { backgroundColor: colors.amber }]} />
+                <Text style={[styles.liveIndicatorText, isOverdue && { color: colors.amber }]}>
+                  {isOverdue ? 'STILL WORKING (OVERDUE)' : 'SHIFT IN PROGRESS'}
+                </Text>
               </View>
-              <ArrowUpRight size={18} color={colors.primaryLight} />
+              <ArrowUpRight size={18} color={isOverdue ? colors.amber : colors.primaryLight} />
             </View>
             <Text style={styles.activeStartTimeText}>
               Started at {formatTimeHHMM(activeSession.actualStart)}
             </Text>
-            <Text style={styles.activeCardHint}>Tap to add breaks or finish with 5-min rounding</Text>
+            <Text style={[styles.activeCardHint, isOverdue && { color: colors.amber }]}>
+              {isOverdue
+                ? 'Did you forget to clock out? Tap to finish shift with current time.'
+                : 'Tap to add breaks or finish with 5-min rounding'}
+            </Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
@@ -133,7 +169,11 @@ export default function DashboardScreen() {
               </View>
               <View style={styles.readyTextGroup}>
                 <Text style={styles.readyTitle}>Ready for Work?</Text>
-                <Text style={styles.readySubtitle}>1-Tap start timestamp recording</Text>
+                <Text style={styles.readySubtitle}>
+                  {todayShift && !todayShift.isDayOff
+                    ? `Auto-starts at ${todayShift.plannedStart ? formatTimeHHMM(todayShift.plannedStart) : 'shift time'}`
+                    : '1-Tap start timestamp recording'}
+                </Text>
               </View>
             </View>
             <View style={styles.startBadge}>
@@ -160,7 +200,7 @@ export default function DashboardScreen() {
 
           <View style={styles.divider} />
 
-          {/* Hourly Rate & Allowances Breakdown */}
+          {/* Rate & Breakdown */}
           <View style={styles.rateGrid}>
             <View style={styles.rateGridCol}>
               <Text style={styles.rateColLabel}>Base Wage</Text>
@@ -177,7 +217,44 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* 3. Monthly Finance Snapshot Card */}
+        {/* 3. Schedule ↔ Work Integration Card (Planned vs Actual Variance) */}
+        {todayShift && !todayShift.isDayOff && (
+          <View style={styles.varianceCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.iconHeadingRow}>
+                <Zap size={16} color={colors.amber} />
+                <Text style={[styles.sectionLabel, { marginLeft: 6, color: colors.textPrimary }]}>
+                  TODAY'S SHIFT INTEGRATION
+                </Text>
+              </View>
+              <View style={styles.shiftTypePill}>
+                <Text style={styles.shiftTypePillText}>{todayShift.shiftType}</Text>
+              </View>
+            </View>
+
+            <View style={styles.varianceGrid}>
+              <View style={styles.varianceCol}>
+                <Text style={styles.varianceColLabel}>Planned</Text>
+                <Text style={styles.varianceColValue}>
+                  {todayShift.plannedStart ? formatTimeHHMM(todayShift.plannedStart) : '--'} →{' '}
+                  {todayShift.plannedEnd ? formatTimeHHMM(todayShift.plannedEnd) : '--'}
+                </Text>
+              </View>
+              <View style={styles.varianceCol}>
+                <Text style={styles.varianceColLabel}>Actual</Text>
+                <Text style={[styles.varianceColValue, { color: colors.primaryLight }]}>
+                  {activeSession
+                    ? `${formatTimeHHMM(activeSession.actualStart)} → Working`
+                    : latestCompleted
+                    ? `${formatTimeHHMM(latestCompleted.actualStart)} → ${latestCompleted.roundedFinish ? formatTimeHHMM(latestCompleted.roundedFinish) : '--'}`
+                    : 'Not started yet'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* 4. Monthly Finance Snapshot Card */}
         <View style={styles.financeCard}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.iconHeadingRow}>
@@ -213,7 +290,7 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* 4. Next Planned Shift Card */}
+        {/* 5. Next Planned Shift Card */}
         <View style={styles.shiftCard}>
           <View style={styles.cardHeaderRow}>
             <Text style={styles.sectionLabel}>NEXT SCHEDULED SHIFT</Text>
@@ -225,8 +302,9 @@ export default function DashboardScreen() {
               <View>
                 <Text style={styles.shiftTitle}>{nextShift.shiftType} Shift</Text>
                 <Text style={styles.shiftTimeSubtitle}>
-                  {formatDateShort(nextShift.date)} • {formatTimeHHMM(nextShift.plannedStart)} –{' '}
-                  {formatTimeHHMM(nextShift.plannedEnd)}
+                  {formatDateShort(nextShift.date)} •{' '}
+                  {nextShift.plannedStart ? formatTimeHHMM(nextShift.plannedStart) : ''}
+                  {nextShift.plannedEnd ? ` – ${formatTimeHHMM(nextShift.plannedEnd)}` : ''}
                 </Text>
               </View>
               <View style={styles.shiftTypePill}>
@@ -317,6 +395,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 10,
     elevation: 4,
+  },
+  activeWorkCardOverdue: {
+    backgroundColor: 'rgba(120, 53, 15, 0.3)',
+    borderColor: colors.amber,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -479,6 +561,40 @@ const styles = StyleSheet.create({
   rateColValue: {
     color: colors.textPrimary,
     fontSize: 14,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+
+  // Variance Card
+  varianceCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 16,
+    marginBottom: 18,
+  },
+  varianceGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  varianceCol: {
+    flex: 1,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 10,
+  },
+  varianceColLabel: {
+    color: colors.textTertiary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  varianceColValue: {
+    color: colors.textPrimary,
+    fontSize: 13,
     fontWeight: '700',
     marginTop: 2,
   },
