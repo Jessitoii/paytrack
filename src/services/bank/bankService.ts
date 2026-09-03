@@ -21,6 +21,7 @@ function getApiBaseUrl(): string {
 export interface BankSyncResult {
   accountsCount: number;
   transactionsInserted: number;
+  transactionsUpdated?: number;
   transactionsSkipped: number;
   totalTransactions: number;
   syncedAt: string;
@@ -37,19 +38,20 @@ export const bankService = {
     return data.institutions || [];
   },
 
-  async connectBank(institutionId = 'ING_INGBNL2A', institutionName = 'ING Netherlands'): Promise<{
+  async connectBank(institutionId = 'ING', institutionName = 'ING Netherlands'): Promise<{
     connection: BankConnection;
     accounts: BankAccount[];
   }> {
     const baseUrl = getApiBaseUrl();
     const redirectUrl = `${baseUrl}/api/bank/callback`;
 
-    // 1. Initiate Requisition on Backend
+    // 1. Initiate Requisition / Session on Backend
     const connectRes = await fetch(`${baseUrl}/api/bank/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
         institutionId,
+        aspspName: institutionId,
         redirectUrl,
         reference: `paytrack_${Date.now()}`,
       }),
@@ -65,23 +67,25 @@ export const bankService = {
       throw new Error(msg);
     }
 
-    const { requisitionId, link } = await connectRes.json();
+    const connectData = await connectRes.json();
+    const sessionId = connectData.sessionId || connectData.requisitionId;
+    const link = connectData.link;
 
     // 2. Open In-App Browser for User Consent
     if (link) {
       try {
         const result = await WebBrowser.openAuthSessionAsync(link, 'paytrack://');
         if (result.type === 'cancel' || result.type === 'dismiss') {
-          // Check if requisition was completed anyway before throwing
+          // Check if session was completed anyway before throwing
         }
       } catch (browserErr) {
         console.warn('[BankService] WebBrowser notice:', browserErr);
       }
     }
 
-    // 3. Fetch Accounts from Backend for this Requisition
+    // 3. Fetch Accounts from Backend for this Session
     const accountsRes = await fetch(
-      `${baseUrl}/api/bank/accounts?requisitionId=${encodeURIComponent(requisitionId)}`
+      `${baseUrl}/api/bank/accounts?sessionId=${encodeURIComponent(sessionId)}&requisitionId=${encodeURIComponent(sessionId)}`
     );
 
     if (!accountsRes.ok) {
@@ -101,7 +105,7 @@ export const bankService = {
     const connection = await bankRepository.saveConnection({
       institutionId,
       institutionName,
-      requisitionId,
+      requisitionId: sessionId,
       status: 'CONNECTED',
     });
 
@@ -149,6 +153,7 @@ export const bankService = {
 
     const baseUrl = getApiBaseUrl();
     let totalInserted = 0;
+    let totalUpdated = 0;
     let totalSkipped = 0;
     let totalTransactions = 0;
 
@@ -156,7 +161,10 @@ export const bankService = {
       const syncRes = await fetch(`${baseUrl}/api/bank/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ accountId: acc.gocardlessAccountId }),
+        body: JSON.stringify({
+          accountId: acc.gocardlessAccountId,
+          sessionId: conn.requisitionId,
+        }),
       });
 
       if (!syncRes.ok) {
@@ -184,10 +192,11 @@ export const bankService = {
         ]);
       }
 
-      // Categorize and map transactions
+      // Categorize and map transactions with refined rent matching
       const mappedTxList = rawTxList.map((tx: any) => {
         const cat = categorizeTransaction({
           amount: tx.amount,
+          bookingDate: tx.bookingDate,
           creditorName: tx.creditorName,
           debtorName: tx.debtorName,
           remittanceInformation: tx.remittanceInformation,
@@ -203,24 +212,25 @@ export const bankService = {
           creditorName: tx.creditorName,
           debtorName: tx.debtorName,
           categoryId: cat.categoryId,
-          status: tx.status || 'BOOKED',
+          status: tx.status,
           isRentMatch: cat.isRentMatch,
         };
       });
 
-      // Save to local SQLite with unique constraint deduplication
-      const { inserted, skipped } = await bankRepository.saveTransactions(acc.id, mappedTxList);
+      const { inserted, updated, skipped } = await bankRepository.saveTransactions(acc.id, mappedTxList);
       totalInserted += inserted;
+      totalUpdated += updated || 0;
       totalSkipped += skipped;
     }
 
     const now = new Date().toISOString();
-    await bankRepository.updateConnectionStatus(conn.id, 'CONNECTED', now);
+    await bankRepository.updateLastSynced(conn.id, now);
     dbEvents.emit('finance_changed');
 
     return {
       accountsCount: accounts.length,
       transactionsInserted: totalInserted,
+      transactionsUpdated: totalUpdated,
       transactionsSkipped: totalSkipped,
       totalTransactions,
       syncedAt: now,
@@ -241,7 +251,10 @@ export const bankService = {
       await fetch(`${baseUrl}/api/bank/disconnect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requisitionId: conn.requisitionId }),
+        body: JSON.stringify({
+          sessionId: conn.requisitionId,
+          requisitionId: conn.requisitionId,
+        }),
       });
     } catch (err) {
       console.warn('[BankService] Disconnect API notice:', err);

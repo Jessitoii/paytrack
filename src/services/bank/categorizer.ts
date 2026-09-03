@@ -169,6 +169,7 @@ const RENT_KEYWORDS = ['rent', 'kira', 'huur', 'housing', 'woning', 'kamer', 've
 
 export function categorizeTransaction(tx: {
   amount: number;
+  bookingDate?: string;
   creditorName?: string | null;
   debtorName?: string | null;
   remittanceInformation?: string | null;
@@ -183,27 +184,60 @@ export function categorizeTransaction(tx: {
 
   const isRentText = RENT_KEYWORDS.some((kw) => text.includes(kw));
 
-  // Weekly Monday €160 Rent Check:
-  // If text mentions rent/kira/huur OR amount is exactly -160 (or within €155-€165 with housing text)
-  const isExact160 = Math.abs(Math.abs(tx.amount) - 160) < 0.01;
-  const isClose160 = Math.abs(Math.abs(tx.amount) - 160) <= 5.0;
-
-  if (isRentText || (isExact160 && tx.amount < 0)) {
-    return {
-      categoryId: 'cat_housing',
-      isRentMatch: isExact160 || (isClose160 && isRentText),
-    };
-  }
-
+  // Check if text matches another known non-housing category rule (e.g. MediaMarkt, Albert Heijn, Zara)
+  let matchedOtherCategory: string | null = null;
   for (const rule of CATEGORY_RULES) {
     if (rule.keywords.some((kw) => text.includes(kw))) {
-      return {
-        categoryId: rule.categoryId,
-        isRentMatch: false,
-      };
+      matchedOtherCategory = rule.categoryId;
+      break;
     }
   }
 
+  // Exact €160 payment check (outflow)
+  const isExact160 = Math.abs(Math.abs(tx.amount) - 160) < 0.01 && tx.amount < 0;
+  const isClose160 = Math.abs(Math.abs(tx.amount) - 160) <= 5.0 && tx.amount < 0;
+
+  // Check day of week if bookingDate is provided (Monday is 1 in JS Date)
+  let isMonday = false;
+  if (tx.bookingDate) {
+    const parts = tx.bookingDate.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(year, month, day);
+      isMonday = d.getDay() === 1;
+    }
+  }
+
+  // REFINED RENT MATCHING:
+  // 1. If explicit rent keywords are present:
+  if (isRentText) {
+    return {
+      categoryId: 'cat_housing',
+      isRentMatch: isExact160 || isClose160,
+    };
+  }
+
+  // 2. If it's €160, but matches a known retail/dining/transport merchant (e.g. MediaMarkt €160):
+  // Never mistakenly classify it as rent!
+  if (matchedOtherCategory) {
+    return {
+      categoryId: matchedOtherCategory,
+      isRentMatch: false,
+    };
+  }
+
+  // 3. If exact €160 on a Monday and no conflicting merchant was matched:
+  // e.g. weekly agency rent transfer
+  if (isExact160 && isMonday) {
+    return {
+      categoryId: 'cat_housing',
+      isRentMatch: true,
+    };
+  }
+
+  // 4. Default fallback:
   return {
     categoryId: 'cat_other',
     isRentMatch: false,

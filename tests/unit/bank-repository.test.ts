@@ -11,9 +11,9 @@ describe('Bank Repository & Deduplication Lifecycle', () => {
 
   it('saves and retrieves active bank connection', async () => {
     const conn = await bankRepository.saveConnection({
-      institutionId: 'ING_INGBNL2A',
+      institutionId: 'ING',
       institutionName: 'ING Netherlands',
-      requisitionId: 'req_test_12345',
+      requisitionId: 'session_test_12345',
       status: 'CONNECTED',
     });
 
@@ -23,19 +23,19 @@ describe('Bank Repository & Deduplication Lifecycle', () => {
 
     const active = await bankRepository.getActiveConnection();
     expect(active).not.toBeNull();
-    expect(active?.requisitionId).toBe('req_test_12345');
+    expect(active?.requisitionId).toBe('session_test_12345');
   });
 
   it('saves and updates bank accounts linked to a connection', async () => {
     const conn = await bankRepository.saveConnection({
-      institutionId: 'ING_INGBNL2A',
+      institutionId: 'ING',
       institutionName: 'ING Netherlands',
-      requisitionId: 'req_test_acc',
+      requisitionId: 'session_test_acc',
     });
 
     const accounts = await bankRepository.saveAccounts(conn.id, [
       {
-        gocardlessAccountId: 'gc_acc_001',
+        gocardlessAccountId: 'NL91INGB0001234567',
         iban: 'NL91INGB0001234567',
         accountName: 'Betaalrekening',
         currency: 'EUR',
@@ -51,7 +51,7 @@ describe('Bank Repository & Deduplication Lifecycle', () => {
     // Update balance
     await bankRepository.saveAccounts(conn.id, [
       {
-        gocardlessAccountId: 'gc_acc_001',
+        gocardlessAccountId: 'NL91INGB0001234567',
         iban: 'NL91INGB0001234567',
         balance: 1520.0,
       },
@@ -64,14 +64,14 @@ describe('Bank Repository & Deduplication Lifecycle', () => {
 
   it('idempotently deduplicates transactions preventing double insertion', async () => {
     const conn = await bankRepository.saveConnection({
-      institutionId: 'ING_INGBNL2A',
+      institutionId: 'ING',
       institutionName: 'ING Netherlands',
-      requisitionId: 'req_test_dedup',
+      requisitionId: 'session_test_dedup',
     });
 
     const [acc] = await bankRepository.saveAccounts(conn.id, [
       {
-        gocardlessAccountId: 'gc_acc_dedup',
+        gocardlessAccountId: 'acc_dedup_01',
         iban: 'NL91INGB0001234567',
       },
     ]);
@@ -114,15 +114,61 @@ describe('Bank Repository & Deduplication Lifecycle', () => {
     expect(txsAfterSecond).toHaveLength(2);
   });
 
-  it('disconnects connection while keeping transaction records intact', async () => {
+  it('correctly updates existing transaction via UPSERT when status changes from PENDING to BOOKED', async () => {
     const conn = await bankRepository.saveConnection({
-      institutionId: 'ING_INGBNL2A',
+      institutionId: 'ING',
       institutionName: 'ING Netherlands',
-      requisitionId: 'req_test_disconnect',
+      requisitionId: 'session_test_upsert',
     });
 
     const [acc] = await bankRepository.saveAccounts(conn.id, [
-      { gocardlessAccountId: 'gc_acc_disc', iban: 'NL91INGB0001234567' },
+      { gocardlessAccountId: 'acc_upsert_01', iban: 'NL91INGB0001234567' },
+    ]);
+
+    // Initial sync with a pending transaction
+    const initialSync = await bankRepository.saveTransactions(acc.id, [
+      {
+        gocardlessTransactionId: 'tx_pending_1',
+        amount: -45.0,
+        bookingDate: '2026-09-01',
+        remittanceInformation: 'Pending Card Payment',
+        status: 'PENDING',
+      },
+    ]);
+    expect(initialSync.inserted).toBe(1);
+
+    let rows = await bankRepository.listTransactions({ bankAccountId: acc.id });
+    expect(rows[0].status).toBe('PENDING');
+
+    // Later sync where bank has settled and booked the transaction
+    const laterSync = await bankRepository.saveTransactions(acc.id, [
+      {
+        gocardlessTransactionId: 'tx_pending_1',
+        amount: -45.0,
+        bookingDate: '2026-09-02',
+        remittanceInformation: 'Settled Card Payment Bakkerij',
+        status: 'BOOKED',
+      },
+    ]);
+    expect(laterSync.inserted).toBe(0);
+    expect(laterSync.updated).toBe(1);
+    expect(laterSync.skipped).toBe(0);
+
+    rows = await bankRepository.listTransactions({ bankAccountId: acc.id });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('BOOKED');
+    expect(rows[0].remittanceInformation).toBe('Settled Card Payment Bakkerij');
+  });
+
+  it('disconnects connection while keeping transaction records intact', async () => {
+    const conn = await bankRepository.saveConnection({
+      institutionId: 'ING',
+      institutionName: 'ING Netherlands',
+      requisitionId: 'session_test_disconnect',
+    });
+
+    const [acc] = await bankRepository.saveAccounts(conn.id, [
+      { gocardlessAccountId: 'acc_disc_01', iban: 'NL91INGB0001234567' },
     ]);
 
     await bankRepository.saveTransactions(acc.id, [

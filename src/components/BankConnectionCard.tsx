@@ -73,7 +73,7 @@ export function BankConnectionCard() {
   // Mutations
   const connectMutation = useMutation({
     mutationFn: ({ id, name }: { id?: string; name?: string }) =>
-      bankService.connectBank(id || 'ING_INGBNL2A', name || 'ING Netherlands'),
+      bankService.connectBank(id || 'ING', name || 'ING Netherlands'),
     onSuccess: (res) => {
       setBankPickerVisible(false);
       queryClient.invalidateQueries({ queryKey: ['localBankOverview'] });
@@ -297,7 +297,7 @@ export function BankConnectionCard() {
 
       <View style={styles.promptActionRow}>
         <TouchableOpacity
-          onPress={() => connectMutation.mutate({ id: 'ING_INGBNL2A', name: 'ING Netherlands' })}
+          onPress={() => connectMutation.mutate({ id: 'ING', name: 'ING Netherlands' })}
           disabled={connectMutation.isPending}
           style={[styles.connectPrimaryButton, connectMutation.isPending && { opacity: 0.7 }]}
         >

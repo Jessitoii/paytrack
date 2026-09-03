@@ -329,6 +329,35 @@ savings_goals           -> Target savings buffers and deadlines
 
 ---
 
+## Open Banking Integration (Enable Banking)
+
+PayTrack supports automated bank transaction synchronization and balance tracking via the **Enable Banking API** (PSD2 Open Banking) with **ING Netherlands**:
+
+```text
+React Native / Expo Mobile App
+        │
+        │ HTTPS (EXPO_PUBLIC_API_URL)
+        ▼
+Vercel Serverless Functions (/api/bank/*)
+        │
+        │ RS256 JWT (Signed with ENABLE_BANKING_PRIVATE_KEY)
+        ▼
+Enable Banking API (api.enablebanking.com)
+        │
+        ▼
+ING Netherlands (PSD2 Consent Flow)
+```
+
+- **Architecture**: Stateless Vercel Serverless Functions + Local-first SQLite (`expo-sqlite`).
+- **Security**: The RSA private key (`ENABLE_BANKING_PRIVATE_KEY`) lives exclusively in Vercel environment variables and is never exposed to the client or committed to version control.
+- **Smart Categorization**: Transactions are automatically categorized against Dutch merchants (Albert Heijn, NS, Kruidvat, Bol.com, Spotify).
+- **€160 Monday Rent Protection**: Detects weekly €160 Monday rent transactions and tags them as rent matches (`isRentMatch = 1`) to eliminate double-counting with recurring expenses.
+- **Privacy & Terms**: Accessible legal URLs for Enable Banking application review are available at `/privacy` and `/terms`.
+
+For complete setup instructions, see [`docs/ENABLE_BANKING_ING_SETUP.md`](docs/ENABLE_BANKING_ING_SETUP.md).
+
+---
+
 ## Quality & Standards
 
 - **Zero Floating-Point Error**: Financial calculations are executed using `Decimal.js` to eliminate binary rounding errors.

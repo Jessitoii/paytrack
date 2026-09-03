@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { handleCors, sendJson, parseJsonBody } from '../lib/cors';
-import { deleteRequisition, isMockMode } from '../lib/gocardless';
+import { deleteSession, isMockMode } from '../lib/enableBanking';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
@@ -12,22 +12,26 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   try {
     const body = await parseJsonBody(req);
-    const requisitionId = body.requisitionId;
+    const sessionId = body.sessionId || body.requisitionId;
 
-    if (requisitionId && !isMockMode()) {
+    if (sessionId && !isMockMode()) {
       try {
-        await deleteRequisition(requisitionId);
+        await deleteSession(sessionId);
       } catch (err) {
-        console.warn('[Serverless disconnect notice]', err);
+        console.warn('[Enable Banking disconnect notice]', err);
       }
     }
 
     sendJson(res, 200, {
       success: true,
-      message: 'Bank connection severed and credentials invalidated.',
+      provider: 'enable_banking',
+      message: 'Bank session severed and credentials invalidated via Enable Banking.',
     });
   } catch (err: any) {
-    console.error('[Serverless disconnect error]', err);
-    sendJson(res, 500, { error: 'Failed to disconnect bank account', details: err.message });
+    console.error('[Enable Banking disconnect error]', err);
+    sendJson(res, 500, {
+      error: 'Failed to disconnect bank account via Enable Banking',
+      details: err.message,
+    });
   }
 }

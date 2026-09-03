@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import { handleCors, sendJson } from '../lib/cors';
-import { getInstitutions, isMockMode } from '../lib/gocardless';
+import { getInstitutions, isMockMode } from '../lib/enableBanking';
 import { mockGetInstitutions } from '../lib/mock';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
@@ -15,9 +15,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       ? mockGetInstitutions()
       : await getInstitutions(country);
 
-    sendJson(res, 200, { institutions });
+    sendJson(res, 200, {
+      provider: 'enable_banking',
+      institutions,
+    });
   } catch (err: any) {
-    console.error('[Serverless institutions error]', err);
+    console.error('[Enable Banking institutions error]', err);
     sendJson(res, 500, { error: 'Failed to retrieve institutions list', details: err.message });
   }
 }

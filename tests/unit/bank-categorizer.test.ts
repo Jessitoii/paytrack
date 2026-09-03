@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { categorizeTransaction } from '../../src/services/bank/categorizer';
 
-describe('Smart Bank Transaction Categorizer', () => {
+describe('Smart Bank Transaction Categorizer & Rent Matching', () => {
   it('categorizes Albert Heijn as Food/Groceries', () => {
     const res = categorizeTransaction({
       amount: -28.45,
@@ -71,6 +71,7 @@ describe('Smart Bank Transaction Categorizer', () => {
   it('detects weekly €160 Rent transaction and flags isRentMatch = true', () => {
     const res = categorizeTransaction({
       amount: -160.0,
+      bookingDate: '2026-08-31', // Monday
       creditorName: 'Huisvesting Bleiswijk',
       remittanceInformation: 'Wekelijkse huur week 35',
     });
@@ -78,14 +79,56 @@ describe('Smart Bank Transaction Categorizer', () => {
     expect(res.isRentMatch).toBe(true);
   });
 
-  it('detects exact -€160 even with generic description as Rent match', () => {
+  it('detects €160 with Turkish/Dutch rent text as Rent match', () => {
     const res = categorizeTransaction({
       amount: -160.0,
-      creditorName: 'Kira Odeme',
-      remittanceInformation: 'Monday Rent',
+      creditorName: 'Ev Sahibi Kira Odeme',
+      remittanceInformation: 'Kira haftalik',
     });
     expect(res.categoryId).toBe('cat_housing');
     expect(res.isRentMatch).toBe(true);
+  });
+
+  it('does NOT flag €160 MediaMarkt purchase as rent, correctly classifying as Shopping', () => {
+    const res = categorizeTransaction({
+      amount: -160.0,
+      bookingDate: '2026-08-31', // Monday
+      creditorName: 'MediaMarkt Rotterdam',
+      remittanceInformation: 'Betaalautomaat MediaMarkt Pasnr 012',
+    });
+    expect(res.categoryId).toBe('cat_shopping');
+    expect(res.isRentMatch).toBe(false);
+  });
+
+  it('does NOT flag €160 Zara purchase as rent, correctly classifying as Shopping', () => {
+    const res = categorizeTransaction({
+      amount: -160.0,
+      bookingDate: '2026-08-31', // Monday
+      creditorName: 'Zara Nederland B.V.',
+      remittanceInformation: 'Kleding aankoop',
+    });
+    expect(res.categoryId).toBe('cat_shopping');
+    expect(res.isRentMatch).toBe(false);
+  });
+
+  it('does NOT flag €160 on a Wednesday without rent text as rent match', () => {
+    const res = categorizeTransaction({
+      amount: -160.0,
+      bookingDate: '2026-09-02', // Wednesday
+      creditorName: 'John Doe',
+      remittanceInformation: 'Lening terugbetaling',
+    });
+    expect(res.isRentMatch).toBe(false);
+  });
+
+  it('does NOT flag non-160 housing bill as rent match (e.g. €45 water/huur service cost)', () => {
+    const res = categorizeTransaction({
+      amount: -45.0,
+      creditorName: 'Huurdersvereniging',
+      remittanceInformation: 'Servicekosten huur',
+    });
+    expect(res.categoryId).toBe('cat_housing');
+    expect(res.isRentMatch).toBe(false);
   });
 
   it('falls back to cat_other for unknown transactions', () => {

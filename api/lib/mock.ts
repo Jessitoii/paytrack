@@ -1,74 +1,94 @@
 import {
   BankInstitution,
-  RequisitionDetails,
+  BankSessionDetails,
   BankAccountDetails,
   BankAccountBalances,
   BankTransactionItem,
 } from './types';
 
-const defaultAccountId = 'acc_mock_ing_001';
+const defaultAccountId = 'NL91INGB0001234567';
 
 export function mockGetInstitutions(): BankInstitution[] {
   return [
     {
-      id: 'ING_INGBNL2A',
+      id: 'ING',
       name: 'ING Netherlands',
       bic: 'INGBNL2A',
-      transactionTotalDays: '730',
       countries: ['NL'],
-      logo: 'https://cdn.gocardless.com/institutions/ING_INGBNL2A.png',
+      logo: 'https://cdn.enablebanking.com/aspsps/ING.png',
     },
     {
-      id: 'ABNA_ABNANL2A',
+      id: 'ABN AMRO',
       name: 'ABN AMRO',
       bic: 'ABNANL2A',
-      transactionTotalDays: '730',
       countries: ['NL'],
     },
     {
-      id: 'RABO_RABONL2U',
+      id: 'Rabobank',
       name: 'Rabobank',
       bic: 'RABONL2U',
-      transactionTotalDays: '730',
       countries: ['NL'],
     },
     {
-      id: 'SNSB_SNSBNL2A',
+      id: 'SNS',
       name: 'SNS Bank',
       bic: 'SNSBNL2A',
-      transactionTotalDays: '730',
       countries: ['NL'],
     },
   ];
 }
 
+export function mockStartAuthorization(
+  aspspName: string = 'ING',
+  redirectUrl: string,
+  state: string
+): { url: string; sessionId: string } {
+  const sessionId = `mock_session_${Date.now()}`;
+  const sep = redirectUrl.includes('?') ? '&' : '?';
+  const url = `${redirectUrl}${sep}code=mock_auth_code_123&state=${encodeURIComponent(state)}&session_id=${sessionId}`;
+  return { url, sessionId };
+}
+
+// Backward compatibility alias
 export function mockCreateRequisition(
   institutionId: string,
   redirectUrl: string,
   reference: string
 ): { id: string; link: string } {
-  const id = `req_mock_${Date.now()}`;
-  const sep = redirectUrl.includes('?') ? '&' : '?';
-  const link = `${redirectUrl}${sep}ref=${id}&status=success`;
-  return { id, link };
+  const { url, sessionId } = mockStartAuthorization(institutionId, redirectUrl, reference);
+  return { id: sessionId, link: url };
 }
 
-export function mockGetRequisition(requisitionId: string): RequisitionDetails {
+export function mockExchangeCodeForSession(code: string): BankSessionDetails {
   return {
-    id: requisitionId || 'req_mock_default',
-    status: 'LN', // Linked
-    link: '',
+    id: `session_${code || 'mock'}`,
+    status: 'AUTHORIZED',
     accounts: [defaultAccountId],
-    institutionId: 'ING_INGBNL2A',
-    reference: 'ref_mock_user',
+    institutionId: 'ING',
+    institutionName: 'ING Netherlands',
     createdAt: new Date().toISOString(),
   };
 }
 
-export function mockGetAccountDetails(accountId: string): BankAccountDetails {
+export function mockGetSession(sessionId: string): BankSessionDetails {
   return {
-    id: accountId || defaultAccountId,
-    iban: 'NL91INGB0001234567',
+    id: sessionId || 'session_mock_default',
+    status: 'AUTHORIZED',
+    accounts: [defaultAccountId],
+    institutionId: 'ING',
+    institutionName: 'ING Netherlands',
+    createdAt: new Date().toISOString(),
+  };
+}
+
+// Backward compatibility alias
+export const mockGetRequisition = mockGetSession;
+
+export function mockGetAccountDetails(accountId: string): BankAccountDetails {
+  const cleanId = accountId || defaultAccountId;
+  return {
+    id: cleanId,
+    iban: cleanId.startsWith('NL') ? cleanId : `NL91INGB0001234567`,
     currency: 'EUR',
     ownerName: 'Alper Ozer',
     accountName: 'ING Oranje Betaalpas',
@@ -159,13 +179,13 @@ export function mockGetAccountTransactions(_accountId: string): BankTransactionI
       status: 'BOOKED',
     },
     {
-      transactionId: `mock_tx_${currentYear}_spotify`,
-      amount: -10.99,
+      transactionId: `mock_tx_${currentYear}_mediamarkt_160`,
+      amount: -160.0,
       currency: 'EUR',
       bookingDate: `${currentYear}-${currentMonth}-01`,
       valueDate: `${currentYear}-${currentMonth}-01`,
-      remittanceInformation: 'Spotify Premium maandabonnement Sep 2026',
-      creditorName: 'Spotify AB',
+      remittanceInformation: 'Betaalautomaat MediaMarkt Rotterdam Centrum Pasnr 012',
+      creditorName: 'MediaMarkt Saturn Holding Nederland',
       debtorName: 'Alper Ozer',
       status: 'BOOKED',
     },

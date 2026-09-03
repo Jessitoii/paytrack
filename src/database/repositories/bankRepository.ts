@@ -157,6 +157,16 @@ export const bankRepository = {
     dbEvents.emit('finance_changed');
   },
 
+  async updateLastSynced(id: string, lastSyncedAt: string = new Date().toISOString()): Promise<void> {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    await db.execute(
+      `UPDATE bank_connections SET lastSyncedAt = ?, updatedAt = ? WHERE id = ?;`,
+      [lastSyncedAt, now, id]
+    );
+    dbEvents.emit('finance_changed');
+  },
+
   async disconnectConnection(id: string): Promise<void> {
     const db = getDatabase();
     const now = new Date().toISOString();
@@ -249,51 +259,91 @@ export const bankRepository = {
   async saveTransactions(
     bankAccountId: string,
     transactions: BankTransactionInput[]
-  ): Promise<{ inserted: number; skipped: number }> {
+  ): Promise<{ inserted: number; updated: number; skipped: number }> {
     const db = getDatabase();
     const now = new Date().toISOString();
     let inserted = 0;
+    let updated = 0;
     let skipped = 0;
 
     for (const tx of transactions) {
-      const txId = generateId('btx');
-      const res = await db.execute(
-        `INSERT OR IGNORE INTO bank_transactions (
-           id, bankAccountId, gocardlessTransactionId, amount, currency,
-           bookingDate, valueDate, remittanceInformation, creditorName,
-           debtorName, categoryId, status, isRentMatch, source, createdAt
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BANK', ?);`,
-        [
-          txId,
-          bankAccountId,
-          tx.gocardlessTransactionId,
-          tx.amount,
-          tx.currency ?? 'EUR',
-          tx.bookingDate,
-          tx.valueDate ?? null,
-          tx.remittanceInformation ?? null,
-          tx.creditorName ?? null,
-          tx.debtorName ?? null,
-          tx.categoryId ?? null,
-          tx.status ?? 'BOOKED',
-          tx.isRentMatch ? 1 : 0,
-          now,
-        ]
+      const existing = await db.queryFirst<any>(
+        `SELECT id, amount, status, bookingDate, remittanceInformation FROM bank_transactions
+         WHERE bankAccountId = ? AND gocardlessTransactionId = ? LIMIT 1;`,
+        [bankAccountId, tx.gocardlessTransactionId]
       );
 
-      const count = res.rowsAffected ?? (res as any).changes ?? 0;
-      if (count > 0) {
-        inserted++;
+      if (existing) {
+        const isChanged =
+          existing.status !== (tx.status ?? 'BOOKED') ||
+          Math.abs(existing.amount - tx.amount) > 0.001 ||
+          existing.bookingDate !== tx.bookingDate ||
+          (existing.remittanceInformation || '') !== (tx.remittanceInformation || '');
+
+        if (isChanged) {
+          await db.execute(
+            `UPDATE bank_transactions SET
+               amount = ?,
+               status = ?,
+               bookingDate = ?,
+               valueDate = ?,
+               remittanceInformation = ?,
+               creditorName = ?,
+               debtorName = ?,
+               categoryId = COALESCE(?, categoryId),
+               isRentMatch = ?
+             WHERE id = ?;`,
+            [
+              tx.amount,
+              tx.status ?? 'BOOKED',
+              tx.bookingDate,
+              tx.valueDate ?? null,
+              tx.remittanceInformation ?? null,
+              tx.creditorName ?? null,
+              tx.debtorName ?? null,
+              tx.categoryId ?? null,
+              tx.isRentMatch ? 1 : 0,
+              existing.id,
+            ]
+          );
+          updated++;
+        } else {
+          skipped++;
+        }
       } else {
-        skipped++;
+        const txId = generateId('btx');
+        await db.execute(
+          `INSERT INTO bank_transactions (
+             id, bankAccountId, gocardlessTransactionId, amount, currency,
+             bookingDate, valueDate, remittanceInformation, creditorName,
+             debtorName, categoryId, status, isRentMatch, source, createdAt
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BANK', ?);`,
+          [
+            txId,
+            bankAccountId,
+            tx.gocardlessTransactionId,
+            tx.amount,
+            tx.currency ?? 'EUR',
+            tx.bookingDate,
+            tx.valueDate ?? null,
+            tx.remittanceInformation ?? null,
+            tx.creditorName ?? null,
+            tx.debtorName ?? null,
+            tx.categoryId ?? null,
+            tx.status ?? 'BOOKED',
+            tx.isRentMatch ? 1 : 0,
+            now,
+          ]
+        );
+        inserted++;
       }
     }
 
-    if (inserted > 0) {
+    if (inserted > 0 || updated > 0) {
       dbEvents.emit('finance_changed');
     }
 
-    return { inserted, skipped };
+    return { inserted, updated, skipped };
   },
 
   async listTransactions(filters?: {

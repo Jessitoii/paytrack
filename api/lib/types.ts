@@ -7,15 +7,19 @@ export interface BankInstitution {
   logo?: string;
 }
 
-export interface RequisitionDetails {
+export interface BankSessionDetails {
   id: string;
-  status: string; // 'CR' (Created), 'LN' (Linked), 'EX' (Expired), etc.
-  link: string;
+  status: string; // 'AUTHORIZED' | 'LINKED' | 'EXPIRED' | 'DISCONNECTED'
+  link?: string;
   accounts: string[];
   institutionId: string;
-  reference: string;
+  institutionName: string;
+  reference?: string;
   createdAt?: string;
 }
+
+// Backward compatibility alias
+export type RequisitionDetails = BankSessionDetails;
 
 export interface BankAccountDetails {
   id: string;
@@ -39,9 +43,9 @@ export interface BankTransactionItem {
   amount: number;
   currency: string;
   bookingDate: string;
-  valueDate?: string;
-  remittanceInformation?: string;
-  creditorName?: string;
-  debtorName?: string;
+  valueDate?: string | null;
+  remittanceInformation?: string | null;
+  creditorName?: string | null;
+  debtorName?: string | null;
   status: string; // 'BOOKED' | 'PENDING'
 }

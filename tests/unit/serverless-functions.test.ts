@@ -6,6 +6,8 @@ import callbackHandler from '../../api/bank/callback';
 import accountsHandler from '../../api/bank/accounts';
 import syncHandler from '../../api/bank/sync';
 import disconnectHandler from '../../api/bank/disconnect';
+import privacyHandler from '../../api/privacy';
+import termsHandler from '../../api/terms';
 
 function createMockReqRes(options: {
   method?: string;
@@ -67,18 +69,19 @@ function createMockReqRes(options: {
   return { req, res };
 }
 
-describe('Serverless Functions API Suite', () => {
-  it('GET /api/bank/health returns serverless ok', async () => {
+describe('Serverless Functions API Suite (Enable Banking)', () => {
+  it('GET /api/bank/health returns enable_banking provider and serverless runtime', async () => {
     const { req, res } = createMockReqRes({ method: 'GET', url: '/api/bank/health' });
     await healthHandler(req, res);
 
     expect(res.statusCode).toBe(200);
     const data = res._getData();
     expect(data.status).toBe('ok');
+    expect(data.provider).toBe('enable_banking');
     expect(data.runtime).toBe('serverless');
   });
 
-  it('GET /api/bank/institutions returns institutions with ING first', async () => {
+  it('GET /api/bank/institutions returns Dutch institutions with ING first', async () => {
     const { req, res } = createMockReqRes({
       method: 'GET',
       url: '/api/bank/institutions?country=NL',
@@ -88,15 +91,15 @@ describe('Serverless Functions API Suite', () => {
     expect(res.statusCode).toBe(200);
     const data = res._getData();
     expect(data.institutions.length).toBeGreaterThan(0);
-    expect(data.institutions[0].id).toContain('ING');
+    expect(data.institutions[0].name).toContain('ING');
   });
 
-  it('POST /api/bank/connect generates authorization link', async () => {
+  it('POST /api/bank/connect generates authorization link for ING', async () => {
     const { req, res } = createMockReqRes({
       method: 'POST',
       url: '/api/bank/connect',
       body: {
-        institutionId: 'ING_INGBNL2A',
+        institutionId: 'ING',
         redirectUrl: 'https://paytrack.app/api/bank/callback',
       },
     });
@@ -104,28 +107,28 @@ describe('Serverless Functions API Suite', () => {
 
     expect(res.statusCode).toBe(200);
     const data = res._getData();
-    expect(data.requisitionId).toBeDefined();
+    expect(data.sessionId).toBeDefined();
     expect(data.link).toContain('https://paytrack.app/api/bank/callback');
   });
 
   it('GET /api/bank/callback renders HTML with deep link paytrack://', async () => {
     const { req, res } = createMockReqRes({
       method: 'GET',
-      url: '/api/bank/callback?ref=req_123&status=success',
+      url: '/api/bank/callback?code=mock_code_123&state=state_abc&status=success',
     });
     await callbackHandler(req, res);
 
     expect(res.statusCode).toBe(200);
     const html = res._getBody();
     expect(html).toContain('paytrack://bank-callback');
-    expect(html).toContain('req_123');
+    expect(html).toContain('mock_code_123');
     expect(html).toContain('status=success');
   });
 
   it('GET /api/bank/accounts returns authorized accounts with balances', async () => {
     const { req, res } = createMockReqRes({
       method: 'GET',
-      url: '/api/bank/accounts?requisitionId=req_mock_default',
+      url: '/api/bank/accounts?sessionId=session_mock_default',
     });
     await accountsHandler(req, res);
 
@@ -140,7 +143,7 @@ describe('Serverless Functions API Suite', () => {
     const { req, res } = createMockReqRes({
       method: 'POST',
       url: '/api/bank/sync',
-      body: { accountId: 'acc_mock_ing_001' },
+      body: { accountId: 'NL91INGB0001234567' },
     });
     await syncHandler(req, res);
 
@@ -154,12 +157,34 @@ describe('Serverless Functions API Suite', () => {
     const { req, res } = createMockReqRes({
       method: 'POST',
       url: '/api/bank/disconnect',
-      body: { requisitionId: 'req_mock_default' },
+      body: { sessionId: 'session_mock_default' },
     });
     await disconnectHandler(req, res);
 
     expect(res.statusCode).toBe(200);
     const data = res._getData();
     expect(data.success).toBe(true);
+    expect(data.provider).toBe('enable_banking');
+  });
+
+  it('GET /privacy renders accessible privacy policy HTML', async () => {
+    const { req, res } = createMockReqRes({ method: 'GET', url: '/privacy' });
+    await privacyHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const html = res._getBody();
+    expect(html).toContain('Privacy Policy');
+    expect(html).toContain('Enable Banking');
+    expect(html).toContain('PSD2');
+  });
+
+  it('GET /terms renders accessible terms of use HTML', async () => {
+    const { req, res } = createMockReqRes({ method: 'GET', url: '/terms' });
+    await termsHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const html = res._getBody();
+    expect(html).toContain('Terms of Use');
+    expect(html).toContain('Enable Banking');
   });
 });

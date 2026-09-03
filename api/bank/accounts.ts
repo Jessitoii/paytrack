@@ -2,13 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import { handleCors, sendJson } from '../lib/cors';
 import {
-  getRequisition,
+  exchangeCodeForSession,
   getAccountDetails,
   getAccountBalances,
   isMockMode,
-} from '../lib/gocardless';
+} from '../lib/enableBanking';
 import {
-  mockGetRequisition,
+  mockGetSession,
   mockGetAccountDetails,
   mockGetAccountBalances,
 } from '../lib/mock';
@@ -19,26 +19,40 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   try {
     const parsedUrl = new URL(req.url || '/', 'http://localhost');
-    const requisitionId = parsedUrl.searchParams.get('requisitionId');
+    const sessionId = parsedUrl.searchParams.get('sessionId') || parsedUrl.searchParams.get('requisitionId');
+    const code = parsedUrl.searchParams.get('code');
 
-    if (!requisitionId) {
-      sendJson(res, 400, { error: 'Missing requisitionId query parameter.' });
+    if (!sessionId && !code) {
+      sendJson(res, 400, { error: 'Missing sessionId or code parameter.' });
       return;
     }
 
     const mock = isMockMode();
-    const requisition = mock
-      ? mockGetRequisition(requisitionId)
-      : await getRequisition(requisitionId);
 
-    const accountIds = requisition.accounts || [];
+    let resolvedSessionId = sessionId;
+    let accountIds: string[] = [];
+
+    if (mock) {
+      const mockSession = mockGetSession(sessionId || 'session_mock');
+      resolvedSessionId = mockSession.id;
+      accountIds = mockSession.accounts;
+    } else {
+      if (code && !sessionId) {
+        const session = await exchangeCodeForSession(code);
+        resolvedSessionId = session.id;
+        accountIds = session.accounts;
+      } else {
+        // If sessionId is an IBAN or known account UID from session callback
+        accountIds = [sessionId!];
+      }
+    }
 
     const accountsWithDetails = await Promise.all(
       accountIds.map(async (accId) => {
         try {
           const details = mock
             ? mockGetAccountDetails(accId)
-            : await getAccountDetails(accId);
+            : await getAccountDetails(accId, 'ING Netherlands');
 
           let balances: BankAccountBalances = { balance: 0.0, availableBalance: null, currency: 'EUR' };
           try {
@@ -46,13 +60,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               ? mockGetAccountBalances(accId)
               : await getAccountBalances(accId);
           } catch (balErr) {
-            console.warn(`[Accounts] Could not fetch balances for account ${accId}:`, balErr);
+            console.warn(`[Enable Banking] Could not fetch balances for account ${accId}:`, balErr);
           }
 
           return {
             id: accId,
             iban: details.iban,
-            accountName: details.accountName || details.ownerName || 'ING Checking Account',
+            accountName: details.accountName || 'ING Betaalrekening',
             currency: details.currency || balances.currency || 'EUR',
             balance: balances.balance,
             availableBalance: balances.availableBalance,
@@ -60,20 +74,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
             bankName: details.bankName || 'ING Netherlands',
           };
         } catch (err: any) {
-          console.error(`[Accounts] Error for account ${accId}:`, err);
+          console.error(`[Enable Banking Accounts] Error for account ${accId}:`, err);
           return null;
         }
       })
     );
 
     const validAccounts = accountsWithDetails.filter(Boolean);
+
     sendJson(res, 200, {
-      requisitionId,
-      status: requisition.status,
+      sessionId: resolvedSessionId,
+      requisitionId: resolvedSessionId, // backward compatibility
+      status: 'AUTHORIZED',
       accounts: validAccounts,
     });
   } catch (err: any) {
-    console.error('[Serverless accounts error]', err);
-    sendJson(res, 500, { error: 'Failed to retrieve accounts', details: err.message });
+    console.error('[Enable Banking accounts error]', err);
+    sendJson(res, 500, { error: 'Failed to retrieve accounts from Enable Banking', details: err.message });
   }
 }

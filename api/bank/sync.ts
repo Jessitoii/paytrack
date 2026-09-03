@@ -4,7 +4,7 @@ import {
   getAccountTransactions,
   getAccountBalances,
   isMockMode,
-} from '../lib/gocardless';
+} from '../lib/enableBanking';
 import {
   mockGetAccountTransactions,
   mockGetAccountBalances,
@@ -48,7 +48,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       syncedAt: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error('[Serverless sync error]', err);
-    sendJson(res, 500, { error: 'Failed to sync bank transactions', details: err.message });
+    console.error('[Enable Banking sync error]', err);
+    sendJson(res, 500, {
+      error: 'Failed to sync bank transactions via Enable Banking',
+      details: err.message,
+    });
   }
 }

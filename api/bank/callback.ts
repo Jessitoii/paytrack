@@ -1,16 +1,38 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import { handleCors, sendHtml } from '../lib/cors';
+import { exchangeCodeForSession, isMockMode } from '../lib/enableBanking';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
 
   const parsedUrl = new URL(req.url || '/', 'http://localhost');
-  const ref = parsedUrl.searchParams.get('ref') || '';
-  const status = parsedUrl.searchParams.get('status') || 'success';
+  const code = parsedUrl.searchParams.get('code') || '';
+  const state = parsedUrl.searchParams.get('state') || '';
+  let sessionId = parsedUrl.searchParams.get('session_id') || parsedUrl.searchParams.get('ref') || '';
   const error = parsedUrl.searchParams.get('error') || '';
+  const errorDescription = parsedUrl.searchParams.get('error_description') || '';
 
-  const deepLink = `paytrack://bank-callback?ref=${encodeURIComponent(ref)}&status=${encodeURIComponent(status)}&error=${encodeURIComponent(error)}`;
+  let status = error ? 'error' : 'success';
+
+  // If code is received and we don't have a session ID yet, exchange it for session
+  if (code && !sessionId && status === 'success') {
+    if (isMockMode()) {
+      sessionId = `session_${code}`;
+    } else {
+      try {
+        const session = await exchangeCodeForSession(code);
+        sessionId = session.id;
+      } catch (err: any) {
+        console.error('[Enable Banking callback code exchange error]', err);
+        status = 'error';
+      }
+    }
+  }
+
+  const deepLink = `paytrack://bank-callback?session_id=${encodeURIComponent(sessionId)}&ref=${encodeURIComponent(sessionId)}&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&status=${encodeURIComponent(status)}&error=${encodeURIComponent(error || errorDescription)}`;
+
+  const isSuccess = status === 'success';
 
   const html = `
 <!DOCTYPE html>
@@ -18,7 +40,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PayTrack - Bank Connection Complete</title>
+  <title>PayTrack - ING Connection Complete</title>
   <style>
     body {
       margin: 0;
@@ -36,20 +58,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       background-color: #131C31;
       border: 1px solid #1E293B;
       border-radius: 16px;
-      padding: 32px 24px;
-      max-width: 380px;
+      padding: 36px 28px;
+      max-width: 400px;
       margin: 20px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.6);
     }
     .icon {
-      font-size: 48px;
+      font-size: 52px;
       margin-bottom: 16px;
     }
     h1 {
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 700;
-      margin: 0 0 8px 0;
-      color: #34D399;
+      margin: 0 0 10px 0;
+      color: ${isSuccess ? '#34D399' : '#F87171'};
     }
     p {
       color: #94A3B8;
@@ -59,30 +81,34 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
     .btn {
       display: inline-block;
-      background-color: #10B981;
+      background-color: ${isSuccess ? '#10B981' : '#EF4444'};
       color: #041F14;
       font-weight: 700;
       font-size: 15px;
       text-decoration: none;
-      padding: 12px 24px;
+      padding: 12px 28px;
       border-radius: 10px;
-      transition: background-color 0.2s;
+      transition: opacity 0.2s;
     }
     .btn:hover {
-      background-color: #34D399;
+      opacity: 0.9;
     }
     .note {
       font-size: 12px;
       color: #64748B;
-      margin-top: 16px;
+      margin-top: 18px;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="icon">🏦</div>
-    <h1>Bank Authorization Complete</h1>
-    <p>Your bank connection with ING Netherlands has been authorized. Returning to PayTrack...</p>
+    <div class="icon">${isSuccess ? '🏦' : '⚠️'}</div>
+    <h1>${isSuccess ? 'ING Authorization Complete' : 'Connection Incomplete'}</h1>
+    <p>${
+      isSuccess
+        ? 'Your bank connection with ING Netherlands has been authorized via Enable Banking. Returning to PayTrack...'
+        : 'Bank authorization could not be completed. Please return to PayTrack and try again.'
+    }</p>
     <a href="${deepLink}" class="btn">Open PayTrack</a>
     <div class="note">If the app does not open automatically, tap the button above.</div>
   </div>

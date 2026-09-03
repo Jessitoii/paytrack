@@ -1,76 +1,89 @@
 import { describe, it, expect } from 'vitest';
 import {
   mockGetInstitutions,
-  mockCreateRequisition,
-  mockGetRequisition,
+  mockStartAuthorization,
+  mockExchangeCodeForSession,
+  mockGetSession,
   mockGetAccountDetails,
   mockGetAccountBalances,
   mockGetAccountTransactions,
 } from '../../api/lib/mock';
-import { getValidAccessToken } from '../../api/lib/gocardless';
+import { createEnableBankingJwt } from '../../api/lib/enableBanking';
 
-describe('Serverless Bank Provider & Mock Engine', () => {
+describe('Enable Banking Provider & Mock Engine', () => {
   describe('Mock Serverless Data', () => {
-    it('returns Dutch institutions with ING Netherlands listed', () => {
+    it('returns Dutch institutions with ING Netherlands listed first', () => {
       const institutions = mockGetInstitutions();
       expect(institutions.length).toBeGreaterThan(0);
-      const ing = institutions.find((i) => i.id === 'ING_INGBNL2A');
+      const ing = institutions.find((i) => i.id === 'ING');
       expect(ing).toBeDefined();
       expect(ing?.name).toBe('ING Netherlands');
     });
 
-    it('creates requisition and returns redirect link', () => {
-      const { id, link } = mockCreateRequisition(
-        'ING_INGBNL2A',
+    it('creates authorization session and returns redirect URL', () => {
+      const { url, sessionId } = mockStartAuthorization(
+        'ING',
         'https://paytrack.app/api/bank/callback',
-        'ref_test'
+        'csrf_test_state_123'
       );
-      expect(id).toBeDefined();
-      expect(link).toContain('https://paytrack.app/api/bank/callback');
+      expect(sessionId).toBeDefined();
+      expect(url).toContain('https://paytrack.app/api/bank/callback');
+      expect(url).toContain('csrf_test_state_123');
     });
 
-    it('fetches requisition details and linked accounts', () => {
-      const req = mockGetRequisition('req_mock_default');
-      expect(req.accounts).toContain('acc_mock_ing_001');
-      expect(req.status).toBe('LN');
+    it('exchanges code for session details and linked accounts', () => {
+      const session = mockExchangeCodeForSession('code_abc_123');
+      expect(session.id).toBe('session_code_abc_123');
+      expect(session.status).toBe('AUTHORIZED');
+      expect(session.accounts.length).toBeGreaterThan(0);
+      expect(session.accounts[0]).toBe('NL91INGB0001234567');
+    });
+
+    it('fetches session details and linked accounts', () => {
+      const session = mockGetSession('session_mock_default');
+      expect(session.accounts).toContain('NL91INGB0001234567');
+      expect(session.status).toBe('AUTHORIZED');
     });
 
     it('returns realistic ING Netherlands account details and balance', () => {
-      const details = mockGetAccountDetails('acc_mock_ing_001');
+      const details = mockGetAccountDetails('NL91INGB0001234567');
       expect(details.iban).toBe('NL91INGB0001234567');
       expect(details.bankName).toBe('ING Netherlands');
 
-      const balances = mockGetAccountBalances('acc_mock_ing_001');
+      const balances = mockGetAccountBalances('NL91INGB0001234567');
       expect(balances.balance).toBeGreaterThan(0);
       expect(balances.currency).toBe('EUR');
     });
 
     it('provides realistic Dutch bank transactions including €160 Monday rent', () => {
-      const txs = mockGetAccountTransactions('acc_mock_ing_001');
+      const txs = mockGetAccountTransactions('NL91INGB0001234567');
       expect(txs.length).toBeGreaterThan(0);
 
-      const rentTx = txs.find((t) => t.amount === -160.0);
+      const rentTx = txs.find((t) => t.amount === -160.0 && t.remittanceInformation?.includes('huur'));
       expect(rentTx).toBeDefined();
-      expect(rentTx?.remittanceInformation).toContain('huur');
 
       const ahTx = txs.find((t) => t.creditorName?.includes('Albert Heijn'));
       expect(ahTx).toBeDefined();
+
+      const mediaMarktTx = txs.find((t) => t.creditorName?.includes('MediaMarkt'));
+      expect(mediaMarktTx).toBeDefined();
+      expect(mediaMarktTx?.amount).toBe(-160.0);
     });
   });
 
-  describe('GoCardless Serverless Secret Enforcement', () => {
-    it('throws error when GC_SECRET_ID or GC_SECRET_KEY are missing from environment', async () => {
-      const origId = process.env.GC_SECRET_ID;
-      const origKey = process.env.GC_SECRET_KEY;
-      delete process.env.GC_SECRET_ID;
-      delete process.env.GC_SECRET_KEY;
+  describe('Enable Banking Serverless Secret Enforcement', () => {
+    it('throws descriptive error when ENABLE_BANKING_APP_ID or ENABLE_BANKING_PRIVATE_KEY are missing', () => {
+      const origAppId = process.env.ENABLE_BANKING_APP_ID;
+      const origKey = process.env.ENABLE_BANKING_PRIVATE_KEY;
+      delete process.env.ENABLE_BANKING_APP_ID;
+      delete process.env.ENABLE_BANKING_PRIVATE_KEY;
 
-      await expect(getValidAccessToken()).rejects.toThrow(
-        'GoCardless server credentials (GC_SECRET_ID and GC_SECRET_KEY) are missing.'
+      expect(() => createEnableBankingJwt()).toThrow(
+        'Enable Banking server credentials (ENABLE_BANKING_APP_ID or ENABLE_BANKING_PRIVATE_KEY) are missing in environment.'
       );
 
-      if (origId) process.env.GC_SECRET_ID = origId;
-      if (origKey) process.env.GC_SECRET_KEY = origKey;
+      if (origAppId) process.env.ENABLE_BANKING_APP_ID = origAppId;
+      if (origKey) process.env.ENABLE_BANKING_PRIVATE_KEY = origKey;
     });
   });
 });

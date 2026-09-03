@@ -1,7 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import crypto from 'crypto';
 import { handleCors, sendJson, parseJsonBody } from '../lib/cors';
-import { createRequisition, isMockMode, getSecretCredentials } from '../lib/gocardless';
-import { mockCreateRequisition } from '../lib/mock';
+import {
+  startAuthorization,
+  isMockMode,
+  getEnableBankingCredentials,
+} from '../lib/enableBanking';
+import { mockStartAuthorization } from '../lib/mock';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
@@ -13,22 +18,29 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   try {
     const body = await parseJsonBody(req);
-    const institutionId = body.institutionId || 'ING_INGBNL2A';
-    const reference = body.reference || `paytrack_ref_${Date.now()}`;
-    const { redirectUri } = getSecretCredentials();
+    const aspspName = body.institutionId || body.aspspName || 'ING';
+    const state = body.state || crypto.randomBytes(16).toString('hex');
+
+    const { redirectUri } = getEnableBankingCredentials();
     const redirectUrl = body.redirectUrl || redirectUri || `https://${req.headers.host}/api/bank/callback`;
 
     const result = isMockMode()
-      ? mockCreateRequisition(institutionId, redirectUrl, reference)
-      : await createRequisition(institutionId, redirectUrl, reference);
+      ? mockStartAuthorization(aspspName, redirectUrl, state)
+      : await startAuthorization(aspspName, redirectUrl, state);
 
     sendJson(res, 200, {
-      requisitionId: result.id,
-      link: result.link,
-      institutionId,
+      sessionId: result.sessionId,
+      requisitionId: result.sessionId, // backward compatibility
+      link: result.url,
+      state,
+      institutionId: aspspName,
+      institutionName: aspspName === 'ING' ? 'ING Netherlands' : aspspName,
     });
   } catch (err: any) {
-    console.error('[Serverless connect error]', err);
-    sendJson(res, 500, { error: 'Failed to initiate bank connection', details: err.message });
+    console.error('[Enable Banking connect error]', err);
+    sendJson(res, 500, {
+      error: 'Failed to initiate bank connection with Enable Banking',
+      details: err.message,
+    });
   }
 }
