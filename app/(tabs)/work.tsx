@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
   StyleSheet,
   SafeAreaView,
   Platform,
@@ -30,11 +29,16 @@ import {
   Edit3,
   Sliders,
   Check,
+  ArrowRight,
+  Calendar,
 } from 'lucide-react-native';
 import { workRepository } from '../../src/database';
 import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
-import { colors } from '../../src/theme/colors';
+import { ColorPalette } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/ThemeContext';
+import { useNotification } from '../../src/components/NotificationContext';
+import { WeekTimesheetModal } from '../../src/components/WeekTimesheetModal';
 
 interface BreakItem {
   id: string;
@@ -48,14 +52,25 @@ interface BreakItem {
 
 export default function TrackWorkScreen() {
   const queryClient = useQueryClient();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { showSuccess, showError, confirm } = useNotification();
 
   const { data: workSessions, isLoading, refetch: refetchWork } = useQuery({
     queryKey: ['localWorkSessions'],
     queryFn: () => workRepository.listWorkSessions(),
   });
 
+  const { data: isoWeeks, refetch: refetchWeeks } = useQuery({
+    queryKey: ['localISOWeeksWithSummary'],
+    queryFn: () => workRepository.listISOWeeksWithSummary(),
+  });
+
   // DB Reactivity on database change + tab focus
-  useDatabaseRefresh(['work_changed'], refetchWork);
+  useDatabaseRefresh(['work_changed'], () => {
+    refetchWork();
+    refetchWeeks();
+  });
 
   const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
   const pastSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
@@ -100,6 +115,11 @@ export default function TrackWorkScreen() {
   const [customBreakStart, setCustomBreakStart] = useState('');
   const [customBreakEnd, setCustomBreakEnd] = useState('');
 
+  // 5. Week Timesheet Modal State
+  const [timesheetModalVisible, setTimesheetModalVisible] = useState(false);
+  const [timesheetYear, setTimesheetYear] = useState<number>(() => new Date().getFullYear());
+  const [timesheetWeek, setTimesheetWeek] = useState<number>(36);
+
   // Helper to add standard quick break
   const addQuickBreak = (
     target: 'FINISH' | 'MANUAL' | 'EDIT',
@@ -130,7 +150,7 @@ export default function TrackWorkScreen() {
   const handleSaveCustomBreak = () => {
     const duration = parseInt(customBreakDuration, 10);
     if (isNaN(duration) || duration <= 0) {
-      Alert.alert('Validation Error', 'Please enter a valid duration in minutes.');
+      showError('Validation Error', 'Please enter a valid duration in minutes.');
       return;
     }
 
@@ -200,8 +220,9 @@ export default function TrackWorkScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
       queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
+      showSuccess('Clocked In', 'Work session started.');
     },
-    onError: (err: any) => Alert.alert('Error', err.message),
+    onError: (err: any) => showError('Error', err.message),
   });
 
   const finishMutation = useMutation({
@@ -213,12 +234,12 @@ export default function TrackWorkScreen() {
       queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
       queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setFinishModalVisible(false);
-      Alert.alert(
+      showSuccess(
         'Shift Finished Successfully',
-        `Rounded Finish: ${formatTimeHHMM(data.session.roundedFinish)}\nPaid Time: ${formatMinutes(data.calculation.paidMinutes)}\nEst. Gross: ${formatEUR((data.calculation.paidMinutes / 60) * 16.34)}`
+        `Rounded Finish: ${formatTimeHHMM(data.session.roundedFinish)} • Paid Time: ${formatMinutes(data.calculation.paidMinutes)}`
       );
     },
-    onError: (err: any) => Alert.alert('Finish Error', err.message),
+    onError: (err: any) => showError('Finish Error', err.message),
   });
 
   const manualWorkMutation = useMutation({
@@ -227,12 +248,12 @@ export default function TrackWorkScreen() {
       queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
       queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setManualModalVisible(false);
-      Alert.alert(
+      showSuccess(
         'Manual Session Saved',
-        `Recorded ${formatMinutes(data.calculation.paidMinutes)} paid time.\n5-Min Rounding Ceiling: ${formatTimeHHMM(data.session.roundedFinish)}`
+        `Recorded ${formatMinutes(data.calculation.paidMinutes)} paid time (ceil rounding: ${formatTimeHHMM(data.session.roundedFinish)}).`
       );
     },
-    onError: (err: any) => Alert.alert('Error', err.message),
+    onError: (err: any) => showError('Error', err.message),
   });
 
   const updateWorkMutation = useMutation({
@@ -242,9 +263,9 @@ export default function TrackWorkScreen() {
       queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
       queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setEditModalVisible(false);
-      Alert.alert('Session Updated', 'Work session recalculated and saved locally.');
+      showSuccess('Session Updated', 'Work session recalculated and saved locally.');
     },
-    onError: (err: any) => Alert.alert('Update Error', err.message),
+    onError: (err: any) => showError('Update Error', err.message),
   });
 
   const deleteWorkMutation = useMutation({
@@ -253,9 +274,9 @@ export default function TrackWorkScreen() {
       queryClient.invalidateQueries({ queryKey: ['localWorkSessions'] });
       queryClient.invalidateQueries({ queryKey: ['localFinanceOverview'] });
       setEditModalVisible(false);
-      Alert.alert('Session Deleted', 'Work session removed.');
+      showSuccess('Session Deleted', 'Work session removed.');
     },
-    onError: (err: any) => Alert.alert('Delete Error', err.message),
+    onError: (err: any) => showError('Delete Error', err.message),
   });
 
   // Open Finish Modal
@@ -274,7 +295,7 @@ export default function TrackWorkScreen() {
     if (!activeSession) return;
     const [fh, fm] = finishTimeInput.split(':').map(Number);
     if (isNaN(fh) || isNaN(fm)) {
-      Alert.alert('Validation Error', 'Please enter a valid finish time (HH:MM)');
+      showError('Validation Error', 'Please enter a valid finish time (HH:MM)');
       return;
     }
 
@@ -521,7 +542,7 @@ export default function TrackWorkScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         {/* Header */}
         <View style={styles.header}>
@@ -626,72 +647,89 @@ export default function TrackWorkScreen() {
           </View>
         </View>
 
-        {/* 3. Recent Work History (Clickable to Edit) */}
+        {/* 3. Work History -> Real Week-by-Week Timesheets */}
         <View style={styles.historySection}>
           <View style={styles.historyHeaderRow}>
             <History size={16} color={colors.textSecondary} />
-            <Text style={styles.historySectionTitle}>WORK HISTORY (TAP TO EDIT)</Text>
+            <Text style={styles.historySectionTitle}>WORK HISTORY (WEEK-BY-WEEK TIMESHEETS)</Text>
           </View>
 
-          {pastSessions.length === 0 ? (
+          {(!isoWeeks || isoWeeks.length === 0) ? (
             <View style={styles.emptyHistoryCard}>
               <Text style={styles.emptyHistoryText}>No completed work sessions recorded yet.</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setManualDateStr(new Date().toISOString().substring(0, 10));
+                  setManualStartTime('14:30');
+                  setManualFinishTime('23:00');
+                  setManualBreaks([
+                    { id: 'mb1', type: 'PAID_15', name: '15m Paid Coffee', durationMinutes: 15, isPaid: true },
+                    { id: 'mb2', type: 'UNPAID_30', name: '30m Meal (Unpaid)', durationMinutes: 30, isPaid: false },
+                  ]);
+                  setManualNotes('');
+                  setManualModalVisible(true);
+                }}
+                style={[styles.manualEntryButton, { marginTop: 12 }]}
+              >
+                <Plus size={14} color={colors.textPrimary} />
+                <Text style={styles.manualEntryButtonText}>Add Historical Work</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            pastSessions.map((session: any) => (
-              <TouchableOpacity
-                key={session.id}
-                onPress={() => handleOpenEditModal(session)}
-                activeOpacity={0.75}
-                style={styles.sessionCard}
-              >
-                <View style={styles.sessionCardHeader}>
-                  <Text style={styles.sessionDate}>{formatDateShort(session.actualStart)}</Text>
-                  <View style={styles.sessionCardHeaderRight}>
-                    <View style={styles.sessionPaidPill}>
-                      <CheckCircle2 size={12} color={colors.primary} />
-                      <Text style={styles.sessionPaidText}>
-                        {formatMinutes(session.paidMinutes || 0)} Paid
+            isoWeeks.map((week: any) => {
+              const startD = new Date(week.startDate);
+              const endD = new Date(week.endDate);
+              const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+              const dateRangeStr = `${startD.getDate()} ${MONTH_SHORT[startD.getMonth()]} – ${endD.getDate()} ${MONTH_SHORT[endD.getMonth()]}`;
+
+              return (
+                <TouchableOpacity
+                  key={`${week.year}_${week.weekNumber}`}
+                  onPress={() => {
+                    setTimesheetYear(week.year);
+                    setTimesheetWeek(week.weekNumber);
+                    setTimesheetModalVisible(true);
+                  }}
+                  activeOpacity={0.75}
+                  style={styles.weekCard}
+                >
+                  <View style={styles.weekCardHeader}>
+                    <View>
+                      <Text style={styles.weekTitleText}>Week {week.weekNumber}</Text>
+                      <Text style={styles.weekDateRangeText}>{dateRangeStr}</Text>
+                    </View>
+                    <View style={styles.weekTotalPill}>
+                      <Clock size={12} color={colors.primaryLight} />
+                      <Text style={styles.weekTotalPillText}>
+                        {formatMinutes(week.totalPaidMinutes)}
                       </Text>
                     </View>
-                    <Edit3 size={14} color={colors.textTertiary} style={{ marginLeft: 6 }} />
                   </View>
-                </View>
 
-                <View style={styles.sessionDetailsRow}>
-                  <Text style={styles.sessionTimeSpan}>
-                    {formatTimeHHMM(session.actualStart)} →{' '}
-                    {session.roundedFinish ? formatTimeHHMM(session.roundedFinish) : '--:--'}
-                  </Text>
-                  <Text style={styles.sessionElapsed}>
-                    Elapsed: {formatMinutes(session.elapsedMinutes || 0)}
-                  </Text>
-                </View>
-
-                {session.breaks && session.breaks.length > 0 && (
-                  <View style={styles.sessionBreaksSummaryRow}>
-                    {session.breaks.map((b: any, bIdx: number) => (
-                      <View
-                        key={bIdx}
-                        style={[
-                          styles.sessionMiniBreakBadge,
-                          b.isPaid ? styles.miniBreakPaid : styles.miniBreakUnpaid,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.sessionMiniBreakText,
-                            b.isPaid ? { color: colors.primaryLight } : { color: colors.amber },
-                          ]}
-                        >
-                          {b.durationMinutes}m {b.isPaid ? 'Paid' : 'Unpaid'}
-                        </Text>
-                      </View>
-                    ))}
+                  <View style={styles.weekEarningsRow}>
+                    <View style={styles.weekEarningCol}>
+                      <Text style={styles.weekEarningLabel}>Total Paid</Text>
+                      <Text style={styles.weekEarningValue}>{formatMinutes(week.totalPaidMinutes)}</Text>
+                    </View>
+                    <View style={styles.weekEarningCol}>
+                      <Text style={styles.weekEarningLabel}>Estimated Gross</Text>
+                      <Text style={styles.weekEarningValue}>{formatEUR(week.estimatedGross)}</Text>
+                    </View>
+                    <View style={styles.weekEarningCol}>
+                      <Text style={styles.weekEarningLabel}>Estimated Net</Text>
+                      <Text style={[styles.weekEarningValue, { color: colors.primaryLight }]}>
+                        {formatEUR(week.estimatedNet)}
+                      </Text>
+                    </View>
                   </View>
-                )}
-              </TouchableOpacity>
-            ))
+
+                  <View style={styles.viewTimesheetActionRow}>
+                    <Text style={styles.viewTimesheetActionText}>View Timesheet ({week.sessionCount} shifts)</Text>
+                    <ArrowRight size={14} color={colors.primaryLight} />
+                  </View>
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
       </ScrollView>
@@ -903,10 +941,13 @@ export default function TrackWorkScreen() {
               <TouchableOpacity
                 onPress={() => {
                   if (editingSessionId) {
-                    Alert.alert('Delete Session', 'Are you sure you want to remove this work session?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Delete', style: 'destructive', onPress: () => deleteWorkMutation.mutate(editingSessionId) },
-                    ]);
+                    confirm({
+                      title: 'Delete Session',
+                      message: 'Are you sure you want to remove this work session record?',
+                      confirmText: 'Delete',
+                      isDestructive: true,
+                      onConfirm: () => deleteWorkMutation.mutate(editingSessionId),
+                    });
                   }
                 }}
                 disabled={deleteWorkMutation.isPending}
@@ -1129,11 +1170,36 @@ export default function TrackWorkScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 5. Dedicated Week Timesheet Detail Modal */}
+      <WeekTimesheetModal
+        visible={timesheetModalVisible}
+        initialYear={timesheetYear}
+        initialWeekNumber={timesheetWeek}
+        onClose={() => setTimesheetModalVisible(false)}
+        onAddWorkDate={(dateStr) => {
+          setTimesheetModalVisible(false);
+          setManualDateStr(dateStr);
+          setManualStartTime('14:30');
+          setManualFinishTime('23:00');
+          setManualBreaks([
+            { id: 'mb1', type: 'PAID_15', name: '15m Paid Coffee', durationMinutes: 15, isPaid: true },
+            { id: 'mb2', type: 'UNPAID_30', name: '30m Meal (Unpaid)', durationMinutes: 30, isPaid: false },
+          ]);
+          setManualNotes('');
+          setManualModalVisible(true);
+        }}
+        onEditSession={(session) => {
+          setTimesheetModalVisible(false);
+          handleOpenEditModal(session);
+        }}
+      />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ColorPalette) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1269,7 +1335,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   finishButtonText: {
-    color: '#FFF',
+    color: colors.textInverse,
     fontSize: 15,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -1317,7 +1383,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // History Section
+  // History Section & Week Cards
   historySection: {
     marginTop: 4,
   },
@@ -1338,7 +1404,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 20,
+    padding: 24,
     alignItems: 'center',
   },
   emptyHistoryText: {
@@ -1346,85 +1412,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  sessionCard: {
+  weekCard: {
     backgroundColor: colors.card,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 14,
-    marginBottom: 10,
+    padding: 16,
+    marginBottom: 12,
   },
-  sessionCardHeader: {
+  weekCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  sessionCardHeaderRight: {
+  weekTitleText: {
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  weekDateRangeText: {
+    color: colors.textSecondary,
+    fontSize: 12.5,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  weekTotalPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: colors.primaryBg,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    gap: 5,
   },
-  sessionDate: {
+  weekTotalPillText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  weekEarningsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 12,
+    marginBottom: 12,
+  },
+  weekEarningCol: {
+    flex: 1,
+  },
+  weekEarningLabel: {
+    color: colors.textTertiary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  weekEarningValue: {
     color: colors.textPrimary,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
+    marginTop: 2,
   },
-  sessionPaidPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primaryBg,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    gap: 4,
-  },
-  sessionPaidText: {
-    color: colors.primaryLight,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  sessionDetailsRow: {
+  viewTimesheetActionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  sessionTimeSpan: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  sessionElapsed: {
-    color: colors.textTertiary,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  sessionBreaksSummaryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.cardBorder,
-  },
-  sessionMiniBreakBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  miniBreakPaid: {
-    backgroundColor: colors.primaryBg,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  miniBreakUnpaid: {
-    backgroundColor: colors.amberBg,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-  },
-  sessionMiniBreakText: {
-    fontSize: 9.5,
+  viewTimesheetActionText: {
+    color: colors.primaryLight,
+    fontSize: 12.5,
     fontWeight: '700',
   },
 

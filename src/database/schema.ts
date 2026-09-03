@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 export const CREATE_TABLES_SQL = `
 -- 1. User Profile & Settings
@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS employments (
   id TEXT PRIMARY KEY,
   employerName TEXT NOT NULL,
   agencyName TEXT,
+  role TEXT DEFAULT 'Order Picker',
+  location TEXT DEFAULT 'Bleiswijk',
   country TEXT NOT NULL DEFAULT 'NL',
   startDate TEXT NOT NULL,
   endDate TEXT,
@@ -197,6 +199,8 @@ CREATE TABLE IF NOT EXISTS expense_categories (
   icon TEXT NOT NULL,
   color TEXT NOT NULL,
   isDefault INTEGER NOT NULL DEFAULT 1,
+  isActive INTEGER NOT NULL DEFAULT 1,
+  sortOrder INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL
 );
 
@@ -220,9 +224,11 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
   amount REAL NOT NULL,
   frequency TEXT NOT NULL DEFAULT 'MONTHLY',
   dayOfMonth INTEGER NOT NULL DEFAULT 1,
+  dayOfWeek INTEGER DEFAULT 1,
   startDate TEXT NOT NULL,
   endDate TEXT,
   isActive INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   FOREIGN KEY (categoryId) REFERENCES expense_categories (id) ON DELETE CASCADE
@@ -233,10 +239,85 @@ CREATE TABLE IF NOT EXISTS savings_goals (
   name TEXT NOT NULL,
   targetAmount REAL NOT NULL,
   currentAmount REAL NOT NULL DEFAULT 0.0,
+  priorityOrder INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  monthlyTarget REAL,
+  notes TEXT,
   targetDate TEXT,
   color TEXT NOT NULL DEFAULT '#10B981',
   icon TEXT NOT NULL DEFAULT 'target',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
+
+-- 8. Payroll Calibrations & History
+CREATE TABLE IF NOT EXISTS payroll_calibrations (
+  id TEXT PRIMARY KEY,
+  employmentId TEXT NOT NULL,
+  parameterName TEXT NOT NULL,
+  oldValue REAL NOT NULL,
+  suggestedValue REAL NOT NULL,
+  sampleCount INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  appliedAt TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (employmentId) REFERENCES employments (id) ON DELETE CASCADE
+);
+
+-- 9. Open Banking (GoCardless & ING Netherlands)
+CREATE TABLE IF NOT EXISTS bank_connections (
+  id TEXT PRIMARY KEY,
+  institutionId TEXT NOT NULL,
+  institutionName TEXT NOT NULL,
+  requisitionId TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'CONNECTED',
+  lastSyncedAt TEXT,
+  expiresAt TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id TEXT PRIMARY KEY,
+  connectionId TEXT NOT NULL,
+  gocardlessAccountId TEXT NOT NULL UNIQUE,
+  iban TEXT NOT NULL,
+  accountName TEXT,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  balance REAL NOT NULL DEFAULT 0.0,
+  availableBalance REAL,
+  bankName TEXT DEFAULT 'ING Netherlands',
+  status TEXT NOT NULL DEFAULT 'READY',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (connectionId) REFERENCES bank_connections (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_conn ON bank_accounts (connectionId);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  bankAccountId TEXT NOT NULL,
+  gocardlessTransactionId TEXT NOT NULL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  bookingDate TEXT NOT NULL,
+  valueDate TEXT,
+  remittanceInformation TEXT,
+  creditorName TEXT,
+  debtorName TEXT,
+  categoryId TEXT,
+  status TEXT NOT NULL DEFAULT 'BOOKED',
+  isRentMatch INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'BANK',
+  createdAt TEXT NOT NULL,
+  UNIQUE(bankAccountId, gocardlessTransactionId),
+  FOREIGN KEY (bankAccountId) REFERENCES bank_accounts (id) ON DELETE CASCADE,
+  FOREIGN KEY (categoryId) REFERENCES expense_categories (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_tx_date ON bank_transactions (bookingDate);
+CREATE INDEX IF NOT EXISTS idx_bank_tx_account ON bank_transactions (bankAccountId);
 `;

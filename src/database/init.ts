@@ -23,6 +23,45 @@ export async function initializeDatabase(): Promise<void> {
   try {
     await db.execute('ALTER TABLE work_breaks ADD COLUMN endTime TEXT;');
   } catch (_) {}
+  try {
+    await db.execute("ALTER TABLE employments ADD COLUMN role TEXT DEFAULT 'Order Picker';");
+  } catch (_) {}
+  try {
+    await db.execute("ALTER TABLE employments ADD COLUMN location TEXT DEFAULT 'Bleiswijk';");
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE recurring_expenses ADD COLUMN note TEXT;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE recurring_expenses ADD COLUMN dayOfWeek INTEGER DEFAULT 1;');
+  } catch (_) {}
+  try {
+    await db.execute("UPDATE expense_categories SET name = 'Rent / Housing' WHERE id = 'cat_housing' AND name = 'Housing';");
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE expense_categories ADD COLUMN isActive INTEGER NOT NULL DEFAULT 1;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE expense_categories ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE savings_goals ADD COLUMN priorityOrder INTEGER NOT NULL DEFAULT 0;');
+  } catch (_) {}
+  try {
+    await db.execute("ALTER TABLE savings_goals ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE';");
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE savings_goals ADD COLUMN monthlyTarget REAL;');
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE savings_goals ADD COLUMN notes TEXT;');
+  } catch (_) {}
+  try {
+    await db.execute("ALTER TABLE expenses ADD COLUMN source TEXT NOT NULL DEFAULT 'MANUAL';");
+  } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE expenses ADD COLUMN bankTransactionId TEXT;');
+  } catch (_) {}
 
   // 3. Check and update schema version
   const versionRow = await db.queryFirst<{ user_version: number }>('PRAGMA user_version;');
@@ -46,9 +85,9 @@ export async function initializeDatabase(): Promise<void> {
     // Seed Employer & Employment
     const employmentId = 'employment_carriere_ah';
     await db.execute(
-      `INSERT INTO employments (id, employerName, agencyName, country, startDate, isActive, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
-      [employmentId, 'Albert Heijn B.V. Bleiswijk', 'Carrière Personeelsdiensten B.V.', 'NL', '2026-01-01', 1, now, now]
+      `INSERT INTO employments (id, employerName, agencyName, role, location, country, startDate, isActive, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [employmentId, 'Albert Heijn B.V. Bleiswijk', 'Carrière Personeelsdiensten B.V.', 'Order Picker', 'Bleiswijk', 'NL', '2026-01-01', 1, now, now]
     );
 
     // Seed Versioned Payroll Configurations (2026 W1-W12 & W13+)
@@ -124,9 +163,9 @@ export async function initializeDatabase(): Promise<void> {
 
     // Seed Savings Goal
     await db.execute(
-      `INSERT INTO savings_goals (id, name, targetAmount, currentAmount, targetDate, color, icon, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      ['goal_emergency', 'Emergency Fund', 5000.0, 1500.0, '2027-01-01', '#10B981', 'shield', now, now]
+      `INSERT INTO savings_goals (id, name, targetAmount, currentAmount, priorityOrder, status, monthlyTarget, notes, targetDate, color, icon, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      ['goal_emergency', 'Emergency Fund', 1000.0, 0.0, 1, 'ACTIVE', 250.0, '3-month buffer', '2026-12-31', '#10B981', 'shield', now, now]
     );
   }
 
@@ -135,7 +174,7 @@ export async function initializeDatabase(): Promise<void> {
   if (!existingCat) {
     const now = new Date().toISOString();
     const categories = [
-      { id: 'cat_housing', name: 'Housing', icon: 'home', color: '#3B82F6' },
+      { id: 'cat_housing', name: 'Rent / Housing', icon: 'home', color: '#3B82F6' },
       { id: 'cat_food', name: 'Food', icon: 'utensils', color: '#10B981' },
       { id: 'cat_transp', name: 'Transportation', icon: 'bus', color: '#F59E0B' },
       { id: 'cat_health', name: 'Health', icon: 'heart', color: '#EF4444' },
@@ -147,11 +186,12 @@ export async function initializeDatabase(): Promise<void> {
       { id: 'cat_other', name: 'Other', icon: 'tag', color: '#9CA3AF' },
     ];
 
+    let sortOrder = 1;
     for (const c of categories) {
       await db.execute(
-        `INSERT INTO expense_categories (id, name, icon, color, isDefault, createdAt)
-         VALUES (?, ?, ?, ?, 1, ?);`,
-        [c.id, c.name, c.icon, c.color, now]
+        `INSERT INTO expense_categories (id, name, icon, color, isDefault, isActive, sortOrder, createdAt)
+         VALUES (?, ?, ?, ?, 1, 1, ?, ?);`,
+        [c.id, c.name, c.icon, c.color, sortOrder++, now]
       );
     }
   }

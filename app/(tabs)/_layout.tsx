@@ -1,10 +1,12 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { LayoutDashboard, Clock, Calendar, FileText, Wallet, Settings } from 'lucide-react-native';
-import { colors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/ThemeContext';
 import { Platform } from 'react-native';
 
 export default function TabsLayout() {
+  const { colors } = useTheme();
+
   return (
     <Tabs
       screenOptions={{

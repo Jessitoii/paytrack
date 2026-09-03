@@ -7,21 +7,30 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:screenshots": "tsx scripts/generate-screenshots.ts",
+    "generate:store-assets": "tsx scripts/generate-store-assets.ts"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@react-native-google-signin/google-signin": "^16.1.4",
     "@tanstack/react-query": "^5.102.8",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "decimal.js": "^10.4.3",
     "expo": "^57.0.18",
     "expo-constants": "^57.0.16",
+    "expo-crypto": "~57.0.2",
     "expo-document-picker": "^57.0.1",
     "expo-file-system": "^57.0.6",
     "expo-linking": "^57.0.8",
+    "expo-navigation-bar": "~57.0.2",
     "expo-router": "^57.0.17",
-    "expo-sqlite": "~57.0.10",
+    "expo-secure-store": "~57.0.3",
+    "expo-sqlite": "~57.0.2",
     "expo-status-bar": "^57.0.1",
+    "expo-web-browser": "~57.0.2",
     "lucide-react-native": "^1.38.0",
     "nativewind": "^4.2.6",
     "react": "19.2.3",
@@ -34,10 +43,10 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "@types/react": "~19.2.4",
     "better-sqlite3": "^11.8.1",
-    "@types/better-sqlite3": "^7.6.12",
     "tsx": "^4.19.3",
     "typescript": "~6.0.3",
     "vitest": "^2.1.8"

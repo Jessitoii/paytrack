@@ -7,3 +7,4 @@ export * from './repositories/shiftRepository';
 export * from './repositories/workRepository';
 export * from './repositories/financeRepository';
 export * from './repositories/payslipRepository';
+export * from './repositories/bankRepository';

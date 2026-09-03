@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PayTrack — Google Play Store Screenshot Generator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>PayTrack Store Assets <span class="badge">Google Play</span></h2>
+      <p style="font-size:12px; color:#94A3B8; margin-top:4px;">1080 &times; 1920 px (16:9 vertical portrait)</p>
+    </div>
+
+    <div class="form-group">
+      <label for="screenSelect">Select Screen Template</label>
+      <select id="screenSelect"></select>
+    </div>
+
+    <div class="form-group">
+      <label for="brandInput">Brand Tag</label>
+      <input type="text" id="brandInput" value="PAYTRACK • OFFLINE-FIRST">
+    </div>
+
+    <div class="form-group">
+      <label for="headlineInput">Headline</label>
+      <input type="text" id="headlineInput">
+    </div>
+
+    <div class="form-group">
+      <label for="subtitleInput">Subtitle</label>
+      <textarea id="subtitleInput" rows="3"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>CLI Automation</label>
+      <p style="font-size:11px; color:#94A3B8; line-height:1.4;">
+        Run <code style="color:#10B981;">npm run generate:store-assets</code> in your terminal to batch-render all 6 assets automatically using headless Chromium.
+      </p>
+    </div>
+  </div>
+
+  <div class="preview-container">
+    <div class="preview-scaler" id="exportCanvas">
+      <div style="width:1080px; height:1920px; position:relative; overflow:hidden; background:#060A13; background-image: radial-gradient(circle at 50% 10%, rgba(16, 185, 129, 0.12) 0%, transparent 50%), radial-gradient(circle at 50% 90%, rgba(56, 189, 248, 0.08) 0%, transparent 60%), linear-gradient(180deg, #070C18 0%, #0B1120 40%, #080D1A 100%); display:flex; flex-direction:column; align-items:center;">
+        <div style="width:920px; padding-top:110px; text-align:center; z-index:5;">
+          <div style="display:inline-flex; align-items:center; gap:8px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); color:#10B981; padding:8px 20px; border-radius:999px; font-size:15px; font-weight:800; letter-spacing:2px; text-transform:uppercase; margin-bottom:24px;" id="previewTag">
+            PAYTRACK • OFFLINE-FIRST
+          </div>
+          <h1 style="font-size:58px; font-weight:900; letter-spacing:-1.5px; line-height:1.15; color:#FFFFFF; margin-bottom:18px;" id="previewHeadline">
+            Real-Time Pay & Hours
+          </h1>
+          <p style="font-size:26px; font-weight:500; line-height:1.4; color:#94A3B8; max-width:820px; margin:0 auto;" id="previewSubtitle">
+            Track your live shift, weekly hours, and estimated take-home pay.
+          </p>
+        </div>
+
+        <div style="position:absolute; bottom:-60px; width:720px; height:1400px; display:flex; justify-content:center; z-index:10;">
+          <div style="width:680px; height:1400px; background:#111827; border-radius:64px 64px 0 0; padding:16px 16px 0 16px; box-shadow: 0 -20px 60px rgba(0,0,0,0.8), 0 0 0 4px #1E293B, 0 0 0 8px #0F172A, inset 0 2px 4px rgba(255,255,255,0.2); position:relative;">
+            <div style="position:absolute; top:26px; left:50%; transform:translateX(-50%); width:120px; height:28px; background:#000; border-radius:20px; z-index:20;"></div>
+            <div style="width:100%; height:100%; background:#0B1120; border-radius:48px 48px 0 0; overflow:hidden;">
+              <img id="previewImg" src="../../docs/screenshots/01-dashboard.png" style="width:100%; height:auto; display:block;" alt="Phone screen preview">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="generator.js"></script>
+</body>
+</html>

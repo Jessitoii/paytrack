@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
   StyleSheet,
   SafeAreaView,
   Platform,
@@ -17,25 +16,30 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
   ChevronRight,
+  Clock,
   Plus,
   Trash2,
   X,
   Copy,
   Sliders,
+  Edit3,
+  Calendar as CalendarIcon,
   Sun,
   Sunset,
   Moon,
   Coffee,
   CheckCircle2,
-  Clock,
+  CalendarRange,
 } from 'lucide-react-native';
 import { shiftRepository } from '../../src/database';
 import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatDateShort, formatTimeHHMM } from '../../src/lib/formatters';
 import { getCalendarMonthGrid, getMonthYearTitle } from '../../src/lib/calendar';
-import { colors } from '../../src/theme/colors';
+import { ColorPalette } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/ThemeContext';
+import { useNotification } from '../../src/components/NotificationContext';
 
-const SHIFT_PRESETS = [
+const getShiftPresets = (colors: ColorPalette) => [
   { label: 'Morning', type: 'MORNING', start: '06:00', end: '14:30', isOff: false, icon: Sun, color: colors.amber },
   { label: 'Afternoon', type: 'AFTERNOON', start: '14:30', end: '23:00', isOff: false, icon: Sunset, color: colors.indigo },
   { label: 'Night', type: 'NIGHT', start: '22:30', end: '06:00', isOff: false, icon: Moon, color: colors.purple },
@@ -46,6 +50,10 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function ShiftsScreen() {
   const queryClient = useQueryClient();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const shiftPresets = useMemo(() => getShiftPresets(colors), [colors]);
+  const { showSuccess, showError, confirm } = useNotification();
 
   const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
   const [currentMonthIndex, setCurrentMonthIndex] = useState(() => new Date().getMonth());
@@ -105,9 +113,9 @@ export default function ShiftsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setDayModalVisible(false);
-      Alert.alert('Shift Saved', 'Shift schedule updated.');
+      showSuccess('Shift Saved', 'Shift schedule updated.');
     },
-    onError: (err: any) => Alert.alert('Error', err.message),
+    onError: (err: any) => showError('Error', err.message),
   });
 
   const deleteShiftMutation = useMutation({
@@ -115,9 +123,9 @@ export default function ShiftsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setDayModalVisible(false);
-      Alert.alert('Shift Removed', 'Shift removed from calendar.');
+      showSuccess('Shift Removed', 'Shift removed from calendar.');
     },
-    onError: (err: any) => Alert.alert('Error', err.message),
+    onError: (err: any) => showError('Error', err.message),
   });
 
   const bulkSaveMutation = useMutation({
@@ -125,9 +133,9 @@ export default function ShiftsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setBulkModalVisible(false);
-      Alert.alert('Week Configured', '7-day shift roster saved atomically.');
+      showSuccess('Week Configured', '7-day shift roster saved atomically.');
     },
-    onError: (err: any) => Alert.alert('Bulk Save Error', err.message),
+    onError: (err: any) => showError('Bulk Save Error', err.message),
   });
 
   const copyPreviousWeekMutation = useMutation({
@@ -136,9 +144,9 @@ export default function ShiftsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['localShifts'] });
       setBulkModalVisible(false);
-      Alert.alert('Copied Successfully', 'Copied previous week roster.');
+      showSuccess('Copied Successfully', 'Copied previous week roster.');
     },
-    onError: (err: any) => Alert.alert('Copy Error', err.message),
+    onError: (err: any) => showError('Copy Error', err.message),
   });
 
   // Month navigation (handles December -> January year rollover seamlessly)
@@ -262,7 +270,7 @@ export default function ShiftsScreen() {
       let expectedActualStart: Date | null = null;
 
       if (!item.isOff && item.type !== 'OFF') {
-        const preset = SHIFT_PRESETS.find((p) => p.type === item.type) || SHIFT_PRESETS[1];
+        const preset = shiftPresets.find((p) => p.type === item.type) || shiftPresets[1];
         const [sh, sm] = preset.start.split(':').map(Number);
         const [eh, em] = preset.end.split(':').map(Number);
 
@@ -300,7 +308,7 @@ export default function ShiftsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         {/* Header */}
         <View style={styles.header}>
@@ -454,7 +462,7 @@ export default function ShiftsScreen() {
               {/* Shift Preset Toggles */}
               <Text style={styles.inputLabel}>SELECT SHIFT TYPE</Text>
               <View style={styles.presetsGrid}>
-                {SHIFT_PRESETS.map((preset) => {
+                {shiftPresets.map((preset) => {
                   const IconComp = preset.icon;
                   const isSelected = editType === preset.type;
                   return (
@@ -596,7 +604,15 @@ export default function ShiftsScreen() {
             <View style={styles.modalActionsRow}>
               {editShiftId && (
                 <TouchableOpacity
-                  onPress={() => deleteShiftMutation.mutate(editShiftId)}
+                  onPress={() => {
+                    confirm({
+                      title: 'Remove Shift',
+                      message: 'Are you sure you want to remove this shift from your schedule?',
+                      confirmText: 'Remove',
+                      isDestructive: true,
+                      onConfirm: () => deleteShiftMutation.mutate(editShiftId),
+                    });
+                  }}
                   disabled={deleteShiftMutation.isPending}
                   style={styles.deleteButton}
                 >
@@ -724,7 +740,8 @@ export default function ShiftsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ColorPalette) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,

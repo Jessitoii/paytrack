@@ -1,3 +1,4 @@
+import '../src/services/cryptoPolyfill';
 import '../global.css';
 import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
@@ -6,7 +7,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { colors } from '../src/theme/colors';
+import { ThemeProvider, useTheme } from '../src/theme/ThemeContext';
+import { NotificationProvider } from '../src/components/NotificationContext';
 import { initializeDatabase } from '../src/database/init';
+import { initializeCloudBackupSync } from '../src/services/cloudBackup';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,13 +22,29 @@ export const queryClient = new QueryClient({
   },
 });
 
+function RootNavigation() {
+  const { colors, isDark } = useTheme();
+
+  return (
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      </Stack>
+    </>
+  );
+}
+
 export default function RootLayout() {
   const [isDbReady, setIsDbReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
 
   useEffect(() => {
     initializeDatabase()
-      .then(() => setIsDbReady(true))
+      .then(() => {
+        setIsDbReady(true);
+        initializeCloudBackupSync();
+      })
       .catch((err) => {
         console.error('Failed to initialize local database:', err);
         setDbError(err.message || 'Database initialization failed');
@@ -46,10 +66,11 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <StatusBar style="light" />
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        </Stack>
+        <ThemeProvider>
+          <NotificationProvider>
+            <RootNavigation />
+          </NotificationProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
   );

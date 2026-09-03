@@ -1,0 +1,165 @@
+import { describe, it, expect } from 'vitest';
+import healthHandler from '../../api/bank/health';
+import institutionsHandler from '../../api/bank/institutions';
+import connectHandler from '../../api/bank/connect';
+import callbackHandler from '../../api/bank/callback';
+import accountsHandler from '../../api/bank/accounts';
+import syncHandler from '../../api/bank/sync';
+import disconnectHandler from '../../api/bank/disconnect';
+
+function createMockReqRes(options: {
+  method?: string;
+  url?: string;
+  body?: any;
+  headers?: Record<string, string>;
+}) {
+  const req: any = {
+    method: options.method || 'GET',
+    url: options.url || '/',
+    headers: options.headers || { host: 'localhost' },
+    body: options.body,
+    on: (event: string, callback: any) => {
+      if (event === 'data' && options.body) {
+        callback(JSON.stringify(options.body));
+      }
+      if (event === 'end') {
+        callback();
+      }
+    },
+  };
+
+  let statusCode = 200;
+  const headers: Record<string, string> = {};
+  let body = '';
+
+  const res: any = {
+    setHeader: (k: string, v: string) => {
+      headers[k.toLowerCase()] = v;
+    },
+    getHeader: (k: string) => headers[k.toLowerCase()],
+    get statusCode() {
+      return statusCode;
+    },
+    set statusCode(code: number) {
+      statusCode = code;
+    },
+    writeHead: (code: number, hdrs?: any) => {
+      statusCode = code;
+      if (hdrs) {
+        Object.keys(hdrs).forEach((k) => {
+          headers[k.toLowerCase()] = hdrs[k];
+        });
+      }
+    },
+    end: (chunk?: string) => {
+      if (chunk) body += chunk;
+    },
+    _getData: () => {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return body;
+      }
+    },
+    _getBody: () => body,
+  };
+
+  return { req, res };
+}
+
+describe('Serverless Functions API Suite', () => {
+  it('GET /api/bank/health returns serverless ok', async () => {
+    const { req, res } = createMockReqRes({ method: 'GET', url: '/api/bank/health' });
+    await healthHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.status).toBe('ok');
+    expect(data.runtime).toBe('serverless');
+  });
+
+  it('GET /api/bank/institutions returns institutions with ING first', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'GET',
+      url: '/api/bank/institutions?country=NL',
+    });
+    await institutionsHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.institutions.length).toBeGreaterThan(0);
+    expect(data.institutions[0].id).toContain('ING');
+  });
+
+  it('POST /api/bank/connect generates authorization link', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'POST',
+      url: '/api/bank/connect',
+      body: {
+        institutionId: 'ING_INGBNL2A',
+        redirectUrl: 'https://paytrack.app/api/bank/callback',
+      },
+    });
+    await connectHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.requisitionId).toBeDefined();
+    expect(data.link).toContain('https://paytrack.app/api/bank/callback');
+  });
+
+  it('GET /api/bank/callback renders HTML with deep link paytrack://', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'GET',
+      url: '/api/bank/callback?ref=req_123&status=success',
+    });
+    await callbackHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const html = res._getBody();
+    expect(html).toContain('paytrack://bank-callback');
+    expect(html).toContain('req_123');
+    expect(html).toContain('status=success');
+  });
+
+  it('GET /api/bank/accounts returns authorized accounts with balances', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'GET',
+      url: '/api/bank/accounts?requisitionId=req_mock_default',
+    });
+    await accountsHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.accounts.length).toBeGreaterThan(0);
+    expect(data.accounts[0].iban).toContain('NL91INGB');
+    expect(data.accounts[0].balance).toBeGreaterThan(0);
+  });
+
+  it('POST /api/bank/sync returns transaction list and balances', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'POST',
+      url: '/api/bank/sync',
+      body: { accountId: 'acc_mock_ing_001' },
+    });
+    await syncHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.transactions.length).toBeGreaterThan(0);
+    expect(data.count).toBeGreaterThan(0);
+  });
+
+  it('POST /api/bank/disconnect responds with confirmation', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'POST',
+      url: '/api/bank/disconnect',
+      body: { requisitionId: 'req_mock_default' },
+    });
+    await disconnectHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.success).toBe(true);
+  });
+});

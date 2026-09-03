@@ -608,4 +608,207 @@ export const workRepository = {
 
     return { week, calculation: calc };
   },
+
+  /**
+   * Returns list of ISO weeks that have recorded work sessions or payroll calculations,
+   * sorted in descending chronological order.
+   */
+  async listISOWeeksWithSummary(limit = 20) {
+    const db = getDatabase();
+    // Query distinct sessions
+    const sessions = await db.query(
+      `SELECT * FROM work_sessions
+       WHERE status IN ('COMPLETED', 'EDITED')
+       ORDER BY actualStart DESC;`
+    );
+
+    // Group by year and weekNumber
+    const weekMap = new Map<string, {
+      year: number;
+      weekNumber: number;
+      startDate: Date;
+      endDate: Date;
+      totalElapsedMinutes: number;
+      totalPaidMinutes: number;
+      sessionCount: number;
+    }>();
+
+    for (const s of sessions) {
+      const sDate = new Date(s.actualStart);
+      const bounds = getISOWeekBounds(sDate);
+      const key = `${bounds.year}_W${String(bounds.weekNumber).padStart(2, '0')}`;
+
+      const existing = weekMap.get(key);
+      if (existing) {
+        existing.totalElapsedMinutes += s.elapsedMinutes || 0;
+        existing.totalPaidMinutes += s.paidMinutes || 0;
+        existing.sessionCount += 1;
+      } else {
+        weekMap.set(key, {
+          year: bounds.year,
+          weekNumber: bounds.weekNumber,
+          startDate: bounds.startDate,
+          endDate: bounds.endDate,
+          totalElapsedMinutes: s.elapsedMinutes || 0,
+          totalPaidMinutes: s.paidMinutes || 0,
+          sessionCount: 1,
+        });
+      }
+    }
+
+    // Attach payroll calculation totals
+    const result = [];
+    for (const weekData of weekMap.values()) {
+      const weekCalc = await db.queryFirst(
+        `SELECT pc.* FROM payroll_calculations pc
+         JOIN payroll_weeks pw ON pw.id = pc.payrollWeekId
+         WHERE pw.year = ? AND pw.weekNumber = ?;`,
+        [weekData.year, weekData.weekNumber]
+      );
+
+      const estimatedGross = weekCalc?.totalGross ?? (weekData.totalPaidMinutes / 60) * 16.34;
+      const estimatedNet = weekCalc?.estimatedNet ?? (weekData.totalPaidMinutes / 60) * 13.50;
+
+      result.push({
+        ...weekData,
+        estimatedGross: Number(estimatedGross.toFixed(2)),
+        estimatedNet: Number(estimatedNet.toFixed(2)),
+        status: weekCalc ? 'CALCULATED' : 'ESTIMATED',
+      });
+    }
+
+    // Sort descending by year, weekNumber
+    return result
+      .sort((a, b) => (b.year === a.year ? b.weekNumber - a.weekNumber : b.year - a.year))
+      .slice(0, limit);
+  },
+
+  /**
+   * Returns a complete 7-day timesheet detail for the given ISO week (Monday through Sunday),
+   * showing planned shift vs actual work sessions for every single day.
+   */
+  async getWeekTimesheetDetail(year: number, weekNumber: number) {
+    const db = getDatabase();
+
+    // 1. Calculate Monday 00:00:00 to Sunday 23:59:59.999
+    const simple = new Date(Date.UTC(year, 0, 4));
+    const dayOfWeek = simple.getUTCDay() || 7;
+    const isoMonday = new Date(simple.getTime() + (weekNumber - 1) * 7 * 86400000 - (dayOfWeek - 1) * 86400000);
+
+    const monday = new Date(isoMonday.getUTCFullYear(), isoMonday.getUTCMonth(), isoMonday.getUTCDate(), 0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const startStr = monday.toISOString();
+    const endStr = sunday.toISOString();
+
+    // 2. Fetch all shifts in this week
+    const shifts = await db.query(
+      `SELECT * FROM shifts WHERE date >= ? AND date <= ? ORDER BY date ASC;`,
+      [startStr.substring(0, 10), endStr.substring(0, 10)]
+    );
+
+    // 3. Fetch all work sessions in this week
+    const sessions = await db.query(
+      `SELECT * FROM work_sessions WHERE actualStart >= ? AND actualStart <= ? ORDER BY actualStart ASC;`,
+      [startStr, endStr]
+    );
+
+    // Fetch breaks for each session
+    const populatedSessions = [];
+    for (const s of sessions) {
+      const breaks = await db.query('SELECT * FROM work_breaks WHERE workSessionId = ? ORDER BY createdAt ASC;', [s.id]);
+      populatedSessions.push({
+        ...s,
+        isManualEntry: Boolean(s.isManualEntry),
+        breaks: breaks.map((b) => ({ ...b, isPaid: Boolean(b.isPaid) })),
+      });
+    }
+
+    // 4. Fetch payroll calculation for this week
+    const weekCalc = await db.queryFirst(
+      `SELECT pc.* FROM payroll_calculations pc
+       JOIN payroll_weeks pw ON pw.id = pc.payrollWeekId
+       WHERE pw.year = ? AND pw.weekNumber = ?;`,
+      [year, weekNumber]
+    );
+
+    // 5. Build 7-day array (Monday to Sunday)
+    const DAY_NAMES = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    const MONTH_SHORT = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const todayStr = new Date().toISOString().substring(0, 10);
+
+    let totalWorkedMinutes = 0;
+    let totalPaidMinutes = 0;
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const dayDate = new Date(monday);
+      dayDate.setDate(monday.getDate() + i);
+      const y = dayDate.getFullYear();
+      const m = String(dayDate.getMonth() + 1).padStart(2, '0');
+      const d = String(dayDate.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+      const formattedDate = `${dayDate.getDate()} ${MONTH_SHORT[dayDate.getMonth()]}`;
+
+      // Find matching shift
+      const dayShift = shifts.find((sh: any) => sh.date.substring(0, 10) === dateStr) || null;
+
+      // Find matching sessions on this calendar day
+      const daySessions = populatedSessions.filter((ws: any) => ws.actualStart.substring(0, 10) === dateStr);
+
+      let dayWorkedMins = 0;
+      let dayPaidMins = 0;
+      for (const s of daySessions) {
+        dayWorkedMins += s.elapsedMinutes || 0;
+        dayPaidMins += s.paidMinutes || 0;
+      }
+
+      totalWorkedMinutes += dayWorkedMins;
+      totalPaidMinutes += dayPaidMins;
+
+      // Gross estimate for this day (hourly rate approx 16.34)
+      const dayGross = (dayPaidMins / 60) * 16.34;
+
+      const hasWork = daySessions.length > 0;
+      const isOff = dayShift ? (Boolean(dayShift.isDayOff) || dayShift.shiftType === 'OFF') : false;
+
+      days.push({
+        dayIndex: i,
+        dateStr,
+        dayName: DAY_NAMES[i],
+        formattedDate,
+        isToday: dateStr === todayStr,
+        isDayOff: isOff,
+        shift: dayShift,
+        sessions: daySessions,
+        primarySession: daySessions[0] || null,
+        hasWork,
+        workedMinutes: dayWorkedMins,
+        paidMinutes: dayPaidMins,
+        grossAmount: Number(dayGross.toFixed(2)),
+      });
+    }
+
+    const estimatedGross = weekCalc?.totalGross ?? (totalPaidMinutes / 60) * 16.34;
+    const estimatedNet = weekCalc?.estimatedNet ?? (totalPaidMinutes / 60) * 13.50;
+
+    return {
+      summary: {
+        year,
+        weekNumber,
+        startDate: monday,
+        endDate: sunday,
+        formattedRange: `${monday.getDate()} ${MONTH_SHORT[monday.getMonth()]} – ${sunday.getDate()} ${MONTH_SHORT[sunday.getMonth()]}`,
+        totalWorkedMinutes,
+        totalPaidMinutes,
+        estimatedGross: Number(estimatedGross.toFixed(2)),
+        estimatedNet: Number(estimatedNet.toFixed(2)),
+        sessionCount: populatedSessions.length,
+        isCalculated: Boolean(weekCalc),
+      },
+      days,
+    };
+  },
 };

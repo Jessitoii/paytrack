@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,8 @@ import {
   CheckCircle2,
   Wallet,
   Zap,
+  Calculator,
+  Target,
 } from 'lucide-react-native';
 import {
   workRepository,
@@ -32,11 +34,16 @@ import {
 } from '../../src/database';
 import { useDatabaseRefresh } from '../../src/hooks/useDatabaseRefresh';
 import { formatEUR, formatMinutes, formatTimeHHMM, formatDateShort } from '../../src/lib/formatters';
-import { colors } from '../../src/theme/colors';
+import { ColorPalette } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/ThemeContext';
+import { WeekSimulatorModal } from '../../src/components/WeekSimulatorModal';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [simulateModalVisible, setSimulateModalVisible] = useState(false);
 
   const { data: profile } = useQuery({
     queryKey: ['localUserProfile'],
@@ -58,16 +65,22 @@ export default function DashboardScreen() {
     queryFn: () => financeRepository.getMonthlyOverview(),
   });
 
+  const { data: analytics, refetch: refetchAnalytics } = useQuery({
+    queryKey: ['localFinancialAnalytics'],
+    queryFn: () => financeRepository.getFinancialAnalytics(),
+  });
+
   const onRefresh = useCallback(() => {
     workRepository.reconcileAutoStart().finally(() => {
       refetchWork();
       refetchShifts();
       refetchFinance();
+      refetchAnalytics();
     });
-  }, [refetchWork, refetchShifts, refetchFinance]);
+  }, [refetchWork, refetchShifts, refetchFinance, refetchAnalytics]);
 
   // Reactive DB refresh on change events + tab focus
-  useDatabaseRefresh(['work_changed', 'shifts_changed', 'finance_changed'], onRefresh);
+  useDatabaseRefresh(['work_changed', 'shifts_changed', 'finance_changed', 'payslips_changed'], onRefresh);
 
   const activeSession = workSessions?.find((s: any) => s.status === 'WORKING');
   const completedSessions = workSessions?.filter((s: any) => s.status !== 'WORKING') || [];
@@ -115,7 +128,7 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.contentContainer}
@@ -200,9 +213,18 @@ export default function DashboardScreen() {
         <View style={styles.payrollCard}>
           <View style={styles.cardHeaderRow}>
             <Text style={styles.sectionLabel}>THIS WEEK'S ESTIMATE</Text>
-            <View style={styles.hoursBadge}>
-              <CheckCircle2 size={12} color={colors.primary} />
-              <Text style={styles.hoursBadgeText}>{formatMinutes(totalPaidMinutesThisWeek)} Worked</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <TouchableOpacity
+                onPress={() => setSimulateModalVisible(true)}
+                style={[styles.simBadge, { backgroundColor: colors.primaryBg, borderColor: colors.primary }]}
+              >
+                <Calculator size={11} color={colors.primary} />
+                <Text style={[styles.simBadgeText, { color: colors.primary }]}>Simulate</Text>
+              </TouchableOpacity>
+              <View style={styles.hoursBadge}>
+                <CheckCircle2 size={12} color={colors.primary} />
+                <Text style={styles.hoursBadgeText}>{formatMinutes(totalPaidMinutesThisWeek)} Worked</Text>
+              </View>
             </View>
           </View>
 
@@ -304,7 +326,54 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* 5. Next Planned Shift Card */}
+        {/* 5. Primary Savings Goal Widget */}
+        {analytics?.currentGoal && (
+          <TouchableOpacity
+            onPress={() => router.push('/(tabs)/finance' as any)}
+            activeOpacity={0.8}
+            style={[styles.financeCard, { marginTop: 14 }]}
+          >
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.iconHeadingRow}>
+                <Target size={16} color={colors.primary} />
+                <Text style={[styles.sectionLabel, { marginLeft: 8, color: colors.textPrimary }]}>
+                  ACTIVE SAVINGS TARGET
+                </Text>
+              </View>
+              <View style={[styles.savingsRateBadge, { backgroundColor: colors.primaryBg }]}>
+                <Text style={[styles.savingsRateText, { color: colors.primary }]}>
+                  {analytics.currentGoal.progressPercentage}%
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[styles.monthlySavingsAmount, { fontSize: 18 }]}>
+              {analytics.currentGoal.name}
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+              {formatEUR(analytics.currentGoal.currentAmount)} of {formatEUR(analytics.currentGoal.targetAmount)} ({formatEUR(analytics.currentGoal.remainingAmount)} remaining)
+            </Text>
+
+            <View style={[styles.progressBarBg, { backgroundColor: colors.backgroundSecondary, height: 8, borderRadius: 4, marginTop: 10, overflow: 'hidden' }]}>
+              <View
+                style={{
+                  height: '100%',
+                  width: `${analytics.currentGoal.progressPercentage}%`,
+                  backgroundColor: colors.primary,
+                  borderRadius: 4,
+                }}
+              />
+            </View>
+
+            {analytics.currentGoal.etaMonths ? (
+              <Text style={{ color: colors.textTertiary, fontSize: 11, marginTop: 8 }}>
+                Estimated completion: ~{analytics.currentGoal.etaMonths} months ({analytics.currentGoal.etaDate})
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+        )}
+
+        {/* 6. Next Planned Shift Card */}
         <View style={styles.shiftCard}>
           <View style={styles.cardHeaderRow}>
             <Text style={styles.sectionLabel}>NEXT SCHEDULED SHIFT</Text>
@@ -330,11 +399,19 @@ export default function DashboardScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Week Simulator Modal */}
+      <WeekSimulatorModal
+        visible={simulateModalVisible}
+        onClose={() => setSimulateModalVisible(false)}
+        scheduledHours={totalPaidMinutesThisWeek / 60}
+      />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ColorPalette) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
@@ -537,6 +614,22 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 11,
     fontWeight: '700',
+  },
+  simBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 4,
+  },
+  simBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  progressBarBg: {
+    width: '100%',
   },
   amountRow: {
     flexDirection: 'row',
