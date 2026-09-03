@@ -25,6 +25,7 @@ export type RequisitionDetails = BankSessionDetails;
 export interface BankAccountDetails {
   id: string;
   iban: string;
+  identificationHash?: string | null;
   currency: string;
   ownerName?: string;
   accountName?: string;

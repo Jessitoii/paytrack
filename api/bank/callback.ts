@@ -14,6 +14,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   const errorDescription = parsedUrl.searchParams.get('error_description') || '';
 
   let status = error ? 'error' : 'success';
+  let appRedirectUrl = 'paytrack://bank-callback';
+
+  if (state) {
+    try {
+      const decoded = JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
+      if (decoded?.appRedirectUrl) {
+        appRedirectUrl = decoded.appRedirectUrl;
+      }
+    } catch (_) {}
+  }
 
   // If code is received and we don't have a session ID yet, exchange it for session
   if (code && !sessionId && status === 'success') {
@@ -21,16 +31,17 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       sessionId = `session_${code}`;
     } else {
       try {
-        const session = await exchangeCodeForSession(code);
+        const session = await exchangeCodeForSession(code, state);
         sessionId = session.id;
       } catch (err: any) {
-        console.error('[Enable Banking callback code exchange error]', err);
+        console.error('[Enable Banking callback code exchange error]', err?.message);
         status = 'error';
       }
     }
   }
 
-  const deepLink = `paytrack://bank-callback?session_id=${encodeURIComponent(sessionId)}&ref=${encodeURIComponent(sessionId)}&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&status=${encodeURIComponent(status)}&error=${encodeURIComponent(error || errorDescription)}`;
+  const querySep = appRedirectUrl.includes('?') ? '&' : '?';
+  const deepLink = `${appRedirectUrl}${querySep}session_id=${encodeURIComponent(sessionId)}&ref=${encodeURIComponent(sessionId)}&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&status=${encodeURIComponent(status)}&error=${encodeURIComponent(error || errorDescription)}`;
 
   const isSuccess = status === 'success';
 

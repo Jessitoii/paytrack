@@ -304,12 +304,21 @@ export function BankConnectionCard() {
         </View>
       </View>
 
-      <View style={styles.privacyNote}>
-        <ShieldCheck size={14} color={colors.primaryLight} />
-        <Text style={styles.privacyNoteText}>
-          Your bank credentials and PIN are never shared with PayTrack. Access is read-only and PSD2-compliant.
-        </Text>
-      </View>
+      {connection?.status === 'EXPIRED' ? (
+        <View style={[styles.privacyNote, { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.25)', borderWidth: 1 }]}>
+          <AlertCircle size={14} color="#EF4444" />
+          <Text style={[styles.privacyNoteText, { color: '#FCA5A5' }]}>
+            Your bank session has expired. Reconnecting will authorize a fresh session and sync your latest accounts.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.privacyNote}>
+          <ShieldCheck size={14} color={colors.primaryLight} />
+          <Text style={styles.privacyNoteText}>
+            Your bank credentials and PIN are never shared with PayTrack. Access is read-only and PSD2-compliant.
+          </Text>
+        </View>
+      )}
 
       <View style={styles.promptActionRow}>
         <TouchableOpacity
@@ -321,8 +330,10 @@ export function BankConnectionCard() {
             <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
             <>
-              <ExternalLink size={16} color={colors.textInverse} />
-              <Text style={styles.connectPrimaryButtonText}>Connect ING Netherlands</Text>
+              <Building2 size={16} color={colors.textInverse} />
+              <Text style={styles.connectPrimaryButtonText}>
+                {connection?.status === 'EXPIRED' ? 'Reconnect ING Netherlands' : 'Connect to ING Netherlands'}
+              </Text>
             </>
           )}
         </TouchableOpacity>

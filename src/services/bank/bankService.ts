@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import { bankRepository, BankConnection, BankAccount, BankTransaction } from '../../database/repositories/bankRepository';
 import { dbEvents } from '../../database/events';
 import { categorizeTransaction } from './categorizer';
@@ -75,7 +76,10 @@ export const bankService = {
     const baseUrl = getApiBaseUrl();
     const redirectUrl = `${baseUrl}/api/bank/callback`;
 
-    console.log(`[BankService] Initiating bank connection: POST ${baseUrl}/api/bank/connect (institution: ${institutionId})`);
+    // Generate dynamic Expo Linking redirect URL (supports both Expo Go and standalone apps)
+    const appRedirectUrl = Linking.createURL('bank-callback');
+
+    console.log(`[BankService] Initiating bank connection: POST ${baseUrl}/api/bank/connect (institution: ${institutionId}, appRedirect: ${appRedirectUrl})`);
 
     // 1. Initiate Requisition / Session on Backend
     const connectRes = await fetch(`${baseUrl}/api/bank/connect`, {
@@ -85,7 +89,7 @@ export const bankService = {
         institutionId,
         aspspName: institutionId,
         redirectUrl,
-        reference: `paytrack_${Date.now()}`,
+        appRedirectUrl,
       }),
     });
 
@@ -96,8 +100,8 @@ export const bankService = {
     }
 
     const connectData = await connectRes.json();
-    const sessionId = connectData.sessionId || connectData.requisitionId;
     const link = connectData.link;
+    const authState = connectData.state;
 
     if (!link) {
       throw new Error('Bank authorization link was not returned by server.');
@@ -115,9 +119,11 @@ export const bankService = {
     // 2. Open In-App Browser for User Consent
     let callbackSessionId: string | undefined;
     let authCode: string | undefined;
+    let returnState: string | undefined;
 
     try {
-      const result = await WebBrowser.openAuthSessionAsync(link, 'paytrack://');
+      // Use appRedirectUrl so Custom Tabs automatically returns to PayTrack upon callback
+      const result = await WebBrowser.openAuthSessionAsync(link, appRedirectUrl);
       console.log(`[BankService] WebBrowser session finished: type=${result.type}`);
       if (result.type === 'success' && result.url) {
         try {
@@ -127,6 +133,7 @@ export const bankService = {
             parsedReturn.searchParams.get('ref') ||
             undefined;
           authCode = parsedReturn.searchParams.get('code') || undefined;
+          returnState = parsedReturn.searchParams.get('state') || undefined;
         } catch (_) {}
       }
     } catch (browserErr: any) {
@@ -134,14 +141,16 @@ export const bankService = {
     }
 
     // 3. Fetch Accounts from Backend for this Session
-    const activeSessionId = callbackSessionId || sessionId;
     const queryParams = new URLSearchParams();
-    if (activeSessionId) {
-      queryParams.set('sessionId', activeSessionId);
-      queryParams.set('requisitionId', activeSessionId);
+    if (callbackSessionId) {
+      queryParams.set('sessionId', callbackSessionId);
     }
     if (authCode) {
       queryParams.set('code', authCode);
+    }
+    const stateToPass = returnState || authState;
+    if (stateToPass) {
+      queryParams.set('state', stateToPass);
     }
 
     const accountsUrl = `${baseUrl}/api/bank/accounts?${queryParams.toString()}`;
@@ -166,20 +175,26 @@ export const bankService = {
       );
     }
 
+    const authorizedSessionId = accountsData.sessionId || callbackSessionId;
+    if (!authorizedSessionId) {
+      throw new Error('Authorized bank session ID was not returned by server.');
+    }
+
     // 4. Save Connection to Local SQLite
     const connection = await bankRepository.saveConnection({
       institutionId,
       institutionName,
-      requisitionId: activeSessionId || sessionId,
+      requisitionId: authorizedSessionId,
       status: 'CONNECTED',
     });
 
-    // 5. Save Accounts to Local SQLite
+    // 5. Save Accounts to Local SQLite with identificationHash matching
     const accounts = await bankRepository.saveAccounts(
       connection.id,
       rawAccounts.map((a: any) => ({
         gocardlessAccountId: a.id,
         iban: a.iban,
+        identificationHash: a.identificationHash,
         accountName: a.accountName || `${institutionName} Account`,
         currency: a.currency || 'EUR',
         balance: a.balance || 0.0,
@@ -236,6 +251,12 @@ export const bankService = {
       });
 
       if (!syncRes.ok) {
+        const errText = await syncRes.text();
+        // If session expired or account not found, mark connection as EXPIRED
+        if (syncRes.status === 404 || errText.includes('BANK_REAUTH_REQUIRED')) {
+          await bankRepository.updateConnectionStatus(conn.id, 'EXPIRED');
+          throw new Error('Your bank connection has expired. Please reconnect your bank.');
+        }
         console.warn(`[BankService] Sync error for account ${acc.id} (${syncRes.status})`);
         continue;
       }
@@ -307,7 +328,7 @@ export const bankService = {
 
   async disconnectBank(connectionId?: string): Promise<{ success: boolean; message: string }> {
     const conn = connectionId
-      ? (await bankRepository.getActiveConnection())
+      ? (await bankRepository.getConnectionById(connectionId))
       : await bankRepository.getActiveConnection();
 
     if (!conn) {
@@ -327,11 +348,12 @@ export const bankService = {
           requisitionId: conn.requisitionId,
         }),
       });
-    } catch (err) {
-      console.warn('[BankService] Disconnect API notice:', err);
+    } catch (err: any) {
+      console.warn('[BankService] Disconnect API notice:', err?.message);
     }
 
-    await bankRepository.disconnectConnection(conn.id);
+    // Clean delete from database: removes connection and account mapping, retains historical transactions
+    await bankRepository.deleteConnection(conn.id, false);
     dbEvents.emit('finance_changed');
 
     return {

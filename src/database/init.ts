@@ -62,6 +62,9 @@ export async function initializeDatabase(): Promise<void> {
   try {
     await db.execute('ALTER TABLE expenses ADD COLUMN bankTransactionId TEXT;');
   } catch (_) {}
+  try {
+    await db.execute('ALTER TABLE bank_accounts ADD COLUMN identificationHash TEXT;');
+  } catch (_) {}
 
   // 3. Check and update schema version
   const versionRow = await db.queryFirst<{ user_version: number }>('PRAGMA user_version;');

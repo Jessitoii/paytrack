@@ -107,7 +107,7 @@ describe('Serverless Functions API Suite (Enable Banking)', () => {
 
     expect(res.statusCode).toBe(200);
     const data = res._getData();
-    expect(data.sessionId).toBeDefined();
+    expect(data.authFlowId).toBeDefined();
     expect(data.link).toContain('https://paytrack.app/api/bank/callback');
   });
 

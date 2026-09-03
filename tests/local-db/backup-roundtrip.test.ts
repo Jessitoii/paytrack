@@ -57,7 +57,7 @@ describe('Database Backup & Restore Audit', () => {
     const backup = await exportDatabaseToJson();
 
     expect(backup.version).toBe(4);
-    expect(backup.schemaVersion).toBe(4);
+    expect(backup.schemaVersion).toBe(5);
     expect(backup.payslips.length).toBeGreaterThanOrEqual(1);
     expect(backup.payslipComponents.length).toBeGreaterThanOrEqual(3);
     expect(backup.expenseCategories.some((c) => c.name === 'Electronics & Tech')).toBe(true);

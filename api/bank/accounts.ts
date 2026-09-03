@@ -22,9 +22,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const parsedUrl = new URL(req.url || '/', 'http://localhost');
     const sessionId = parsedUrl.searchParams.get('sessionId') || parsedUrl.searchParams.get('requisitionId');
     const code = parsedUrl.searchParams.get('code');
+    const state = parsedUrl.searchParams.get('state');
 
-    if (!sessionId && !code) {
-      sendJson(res, 400, { error: 'Missing sessionId or code parameter.' });
+    if (!sessionId && !code && !state) {
+      sendJson(res, 400, {
+        error: 'Missing sessionId, code, or state parameter.',
+        code: 'BANK_PARAM_MISSING',
+      });
       return;
     }
 
@@ -39,12 +43,24 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     } else {
       if (code) {
         console.log('[EnableBanking Accounts] Exchanging code for session...');
-        sessionData = await exchangeCodeForSession(code);
+        sessionData = await exchangeCodeForSession(code, state || undefined);
       } else if (sessionId) {
         console.log(`[EnableBanking Accounts] Fetching session details for sessionId...`);
         sessionData = await getSession(sessionId);
+      } else if (state) {
+        console.log(`[EnableBanking Accounts] Checking session cache for state...`);
+        sessionData = getSession(state); // getSession checks cache by key
       }
       resolvedSessionId = sessionData?.id || sessionData?.session_id || sessionId;
+    }
+
+    if (!sessionData) {
+      sendJson(res, 404, {
+        error: 'Bank session not found or expired. Reauthorization required.',
+        code: 'BANK_REAUTH_REQUIRED',
+        reauthRequired: true,
+      });
+      return;
     }
 
     const rawAccountsList: any[] = sessionData?.rawAccounts || sessionData?.accounts || [];
@@ -57,6 +73,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           if (!accUid) return null;
 
           const iban = typeof accItem === 'object' ? (accItem.account_id?.iban || accItem.iban || '') : '';
+          const identificationHash = typeof accItem === 'object' ? (accItem.identification_hash || accItem.identificationHash || null) : null;
           const holderName = typeof accItem === 'object' ? (accItem.party_name || accItem.name || '') : '';
           const currency = typeof accItem === 'object' ? (accItem.currency || 'EUR') : 'EUR';
 
@@ -81,6 +98,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
           return {
             id: accUid, // CRITICAL: This is the real account UID for balances/transactions!
+            identificationHash,
             iban: displayIban,
             accountName: details?.accountName || holderName || 'ING Betaalrekening',
             currency: balances.currency || currency,
@@ -105,7 +123,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       accounts: validAccounts,
     });
   } catch (err: any) {
-    console.error('[Enable Banking accounts error]', err);
-    sendJson(res, 500, { error: 'Failed to retrieve accounts from Enable Banking', details: err.message });
+    const is404 =
+      err?.statusCode === 404 ||
+      err?.code === 'BANK_SESSION_NOT_FOUND' ||
+      err?.message?.includes('404');
+
+    console.error('[Enable Banking accounts error]', err?.message);
+
+    sendJson(res, is404 ? 404 : 500, {
+      error: is404
+        ? 'Bank session not found or expired. Reauthorization required.'
+        : 'Failed to retrieve accounts from Enable Banking',
+      code: is404 ? 'BANK_REAUTH_REQUIRED' : 'BANK_AUTH_FAILED',
+      reauthRequired: is404,
+      details: err?.message,
+    });
   }
 }

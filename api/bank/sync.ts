@@ -48,10 +48,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       syncedAt: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error('[Enable Banking sync error]', err);
-    sendJson(res, 500, {
-      error: 'Failed to sync bank transactions via Enable Banking',
-      details: err.message,
+    const is404 =
+      err?.statusCode === 404 ||
+      err?.code === 'BANK_SESSION_NOT_FOUND' ||
+      err?.message?.includes('404') ||
+      err?.message?.includes('No account found');
+
+    console.error('[Enable Banking sync error]', err?.message);
+    sendJson(res, is404 ? 404 : 500, {
+      error: is404
+        ? 'Bank account or authorization session not found or expired. Reauthorization required.'
+        : 'Failed to sync bank transactions via Enable Banking',
+      code: is404 ? 'BANK_REAUTH_REQUIRED' : 'BANK_SYNC_FAILED',
+      reauthRequired: is404,
+      details: err?.message,
     });
   }
 }

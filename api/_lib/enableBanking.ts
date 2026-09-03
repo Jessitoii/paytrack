@@ -232,15 +232,50 @@ export async function getInstitutions(country = 'NL'): Promise<BankInstitution[]
   }
 }
 
+// In-memory serverless session cache (survives warm container invocations, keyed by sessionId and state)
+interface CachedSession {
+  session: BankSessionDetails;
+  cachedAt: number;
+}
+const sessionCache = new Map<string, CachedSession>();
+
+export function setCachedSession(session: BankSessionDetails, state?: string): void {
+  const now = Date.now();
+  const entry: CachedSession = { session, cachedAt: now };
+  if (session.id) {
+    sessionCache.set(session.id, entry);
+  }
+  if (state) {
+    sessionCache.set(state, entry);
+  }
+}
+
+export function getCachedSession(key?: string | null): BankSessionDetails | null {
+  if (!key) return null;
+  const entry = sessionCache.get(key);
+  if (!entry) return null;
+  // TTL: 15 minutes
+  if (Date.now() - entry.cachedAt > 15 * 60 * 1000) {
+    sessionCache.delete(key);
+    return null;
+  }
+  return entry.session;
+}
+
+export function deleteCachedSession(key?: string | null): void {
+  if (!key) return;
+  sessionCache.delete(key);
+}
+
 /**
- * Initiates an authorization session with Enable Banking.
- * Returns the bank authorization redirect URL.
+ * Initiates an authorization flow with Enable Banking for an ASPSP.
+ * Returns the authorization link for the user.
  */
 export async function startAuthorization(
   aspspName: string = 'ING',
   redirectUrl: string,
   state: string
-): Promise<{ url: string; sessionId?: string }> {
+): Promise<{ url: string; authFlowId?: string; sessionId?: string }> {
   // Request 90 days validity period
   const validUntil = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -264,24 +299,26 @@ export async function startAuthorization(
     body: JSON.stringify(body),
   });
 
-  let sessionId = res.session_id;
-  if (!sessionId && res.url) {
+  let authFlowId: string | undefined;
+  if (res.url) {
     try {
       const parsed = new URL(res.url);
-      sessionId = parsed.searchParams.get('sessionid') || undefined;
+      authFlowId = parsed.searchParams.get('sessionid') || undefined;
     } catch (_) {}
   }
 
+  // NOTE: authFlowId is the Tilisy auth start token, NOT an authorized PSD2 session ID.
   return {
     url: res.url,
-    sessionId,
+    authFlowId,
+    sessionId: undefined,
   };
 }
 
 /**
  * Exchanges the authorization code received in the callback for an active session.
  */
-export async function exchangeCodeForSession(code: string): Promise<BankSessionDetails> {
+export async function exchangeCodeForSession(code: string, state?: string): Promise<BankSessionDetails> {
   const data = await enableBankingRequest<any>('/sessions', {
     method: 'POST',
     body: JSON.stringify({ code }),
@@ -298,7 +335,7 @@ export async function exchangeCodeForSession(code: string): Promise<BankSessionD
 
   console.log(`[EnableBanking Sessions] Exchanged code for session: accountsCount=${accountIds.length}`);
 
-  return {
+  const sessionDetails: BankSessionDetails = {
     id: data.session_id,
     status: data.status || 'AUTHORIZED',
     accounts: accountIds,
@@ -307,34 +344,59 @@ export async function exchangeCodeForSession(code: string): Promise<BankSessionD
     institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
     createdAt: new Date().toISOString(),
   };
+
+  // Cache session so subsequent accounts calls can find it even if called with state or sessionId
+  setCachedSession(sessionDetails, state);
+
+  return sessionDetails;
 }
 
 /**
  * Retrieves existing session details and account identifiers by session ID.
  */
 export async function getSession(sessionId: string): Promise<BankSessionDetails> {
-  const data = await enableBankingRequest<any>(`/sessions/${encodeURIComponent(sessionId)}`);
+  // Check in-memory cache first
+  const cached = getCachedSession(sessionId);
+  if (cached) {
+    console.log(`[EnableBanking Sessions] Found cached session: status=${cached.status}, accountsCount=${cached.accounts.length}`);
+    return cached;
+  }
 
-  const rawAccounts: any[] = data.accounts || [];
-  const accountIds: string[] = rawAccounts
-    .map((acc: any) => {
-      if (typeof acc === 'string') return acc;
-      // CRITICAL: acc.uid is the session-scoped account identifier needed by /accounts/{uid}/...
-      return acc.uid || acc.id || acc.account_id?.iban;
-    })
-    .filter(Boolean);
+  try {
+    const data = await enableBankingRequest<any>(`/sessions/${encodeURIComponent(sessionId)}`);
 
-  console.log(`[EnableBanking Sessions] Retrieved session: status=${data.status || 'AUTHORIZED'}, accountsCount=${accountIds.length}`);
+    const rawAccounts: any[] = data.accounts || [];
+    const accountIds: string[] = rawAccounts
+      .map((acc: any) => {
+        if (typeof acc === 'string') return acc;
+        // CRITICAL: acc.uid is the session-scoped account identifier needed by /accounts/{uid}/...
+        return acc.uid || acc.id || acc.account_id?.iban;
+      })
+      .filter(Boolean);
 
-  return {
-    id: data.session_id || sessionId,
-    status: data.status || 'AUTHORIZED',
-    accounts: accountIds,
-    rawAccounts,
-    institutionId: data.aspsp?.name || 'ING',
-    institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
-    createdAt: new Date().toISOString(),
-  };
+    console.log(`[EnableBanking Sessions] Retrieved session: status=${data.status || 'AUTHORIZED'}, accountsCount=${accountIds.length}`);
+
+    const sessionDetails: BankSessionDetails = {
+      id: data.session_id || sessionId,
+      status: data.status || 'AUTHORIZED',
+      accounts: accountIds,
+      rawAccounts,
+      institutionId: data.aspsp?.name || 'ING',
+      institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
+      createdAt: new Date().toISOString(),
+    };
+
+    setCachedSession(sessionDetails);
+    return sessionDetails;
+  } catch (err: any) {
+    if (err?.message?.includes('404') || err?.status === 404) {
+      const notFoundErr = new Error('Bank session not found or expired on Enable Banking');
+      (notFoundErr as any).code = 'BANK_SESSION_NOT_FOUND';
+      (notFoundErr as any).statusCode = 404;
+      throw notFoundErr;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -517,12 +579,13 @@ export async function getAccountTransactions(
  * Revokes and deletes a bank session.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
+  deleteCachedSession(sessionId);
   try {
     await enableBankingRequest<void>(`/sessions/${encodeURIComponent(sessionId)}`, {
       method: 'DELETE',
     });
   } catch (err: any) {
-    // Ignore 404 if session is already expired or deleted externally
+    // Ignore 404 if session is already expired or deleted externally (idempotent!)
     if (!err.message?.includes('404')) {
       throw err;
     }

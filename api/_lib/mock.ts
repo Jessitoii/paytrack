@@ -42,21 +42,20 @@ export function mockStartAuthorization(
   aspspName: string = 'ING',
   redirectUrl: string,
   state: string
-): { url: string; sessionId: string } {
-  const sessionId = `mock_session_${Date.now()}`;
+): { url: string; authFlowId: string; sessionId: string } {
+  const authFlowId = `mock_flow_${Date.now()}`;
   const sep = redirectUrl.includes('?') ? '&' : '?';
-  const url = `${redirectUrl}${sep}code=mock_auth_code_123&state=${encodeURIComponent(state)}&session_id=${sessionId}`;
-  return { url, sessionId };
+  const url = `${redirectUrl}${sep}code=mock_auth_code_123&state=${encodeURIComponent(state)}&session_id=${authFlowId}`;
+  return { url, authFlowId, sessionId: authFlowId };
 }
 
-// Backward compatibility alias
 export function mockCreateRequisition(
   institutionId: string,
   redirectUrl: string,
   reference: string
 ): { id: string; link: string } {
-  const { url, sessionId } = mockStartAuthorization(institutionId, redirectUrl, reference);
-  return { id: sessionId, link: url };
+  const { url, authFlowId } = mockStartAuthorization(institutionId, redirectUrl, reference);
+  return { id: authFlowId, link: url };
 }
 
 export function mockExchangeCodeForSession(code: string): BankSessionDetails {

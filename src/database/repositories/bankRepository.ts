@@ -18,6 +18,7 @@ export interface BankAccount {
   connectionId: string;
   gocardlessAccountId: string;
   iban: string;
+  identificationHash?: string | null;
   accountName?: string | null;
   currency: string;
   balance: number;
@@ -77,6 +78,15 @@ export const bankRepository = {
     return row || null;
   },
 
+  async getConnectionById(id: string): Promise<BankConnection | null> {
+    const db = getDatabase();
+    const row = await db.queryFirst<any>(
+      `SELECT * FROM bank_connections WHERE id = ? LIMIT 1;`,
+      [id]
+    );
+    return row || null;
+  },
+
   async getConnectionByRequisitionId(requisitionId: string): Promise<BankConnection | null> {
     const db = getDatabase();
     const row = await db.queryFirst<any>(
@@ -95,6 +105,16 @@ export const bankRepository = {
   }): Promise<BankConnection> {
     const db = getDatabase();
     const now = new Date().toISOString();
+    const isConnecting = (input.status ?? 'CONNECTED') === 'CONNECTED';
+
+    // Ensure only ONE connection can be CONNECTED at any time
+    if (isConnecting) {
+      await db.execute(
+        `UPDATE bank_connections SET status = 'DISCONNECTED', updatedAt = ? WHERE status = 'CONNECTED' AND requisitionId != ?;`,
+        [now, input.requisitionId]
+      );
+    }
+
     const existing = await this.getConnectionByRequisitionId(input.requisitionId);
 
     if (existing) {
@@ -177,12 +197,26 @@ export const bankRepository = {
     dbEvents.emit('finance_changed');
   },
 
+  async deleteConnection(id: string, removeTransactions = false): Promise<void> {
+    const db = getDatabase();
+    if (removeTransactions) {
+      const accounts = await this.listAccounts(id);
+      for (const acc of accounts) {
+        await db.execute('DELETE FROM bank_transactions WHERE bankAccountId = ?;', [acc.id]);
+      }
+    }
+    await db.execute('DELETE FROM bank_accounts WHERE connectionId = ?;', [id]);
+    await db.execute('DELETE FROM bank_connections WHERE id = ?;', [id]);
+    dbEvents.emit('finance_changed');
+  },
+
   // 2. Account Management
   async saveAccounts(
     connectionId: string,
     accounts: Array<{
       gocardlessAccountId: string;
       iban: string;
+      identificationHash?: string | null;
       accountName?: string | null;
       currency?: string;
       balance?: number;
@@ -195,20 +229,43 @@ export const bankRepository = {
     const now = new Date().toISOString();
 
     for (const acc of accounts) {
-      const existing = await db.queryFirst<any>(
-        'SELECT id FROM bank_accounts WHERE gocardlessAccountId = ? OR (connectionId = ? AND iban = ?);',
-        [acc.gocardlessAccountId, connectionId, acc.iban]
-      );
+      // 1. Match by stable identificationHash if available
+      let existing: any = null;
+      if (acc.identificationHash) {
+        existing = await db.queryFirst<any>(
+          'SELECT id FROM bank_accounts WHERE identificationHash = ? LIMIT 1;',
+          [acc.identificationHash]
+        );
+      }
+
+      // 2. Fallback: match by gocardlessAccountId (account UID)
+      if (!existing) {
+        existing = await db.queryFirst<any>(
+          'SELECT id FROM bank_accounts WHERE gocardlessAccountId = ? LIMIT 1;',
+          [acc.gocardlessAccountId]
+        );
+      }
+
+      // 3. Fallback: match by connectionId and iban
+      if (!existing) {
+        existing = await db.queryFirst<any>(
+          'SELECT id FROM bank_accounts WHERE connectionId = ? AND iban = ? LIMIT 1;',
+          [connectionId, acc.iban]
+        );
+      }
 
       if (existing) {
         await db.execute(
           `UPDATE bank_accounts SET
-             gocardlessAccountId = ?, iban = ?, accountName = ?, currency = ?, balance = ?, availableBalance = ?,
+             connectionId = ?, gocardlessAccountId = ?, iban = ?, identificationHash = ?,
+             accountName = ?, currency = ?, balance = ?, availableBalance = ?,
              bankName = ?, status = ?, updatedAt = ?
            WHERE id = ?;`,
           [
+            connectionId,
             acc.gocardlessAccountId,
             acc.iban,
+            acc.identificationHash ?? null,
             acc.accountName ?? null,
             acc.currency ?? 'EUR',
             acc.balance ?? 0.0,
@@ -223,14 +280,15 @@ export const bankRepository = {
         const id = generateId('acc');
         await db.execute(
           `INSERT INTO bank_accounts (
-             id, connectionId, gocardlessAccountId, iban, accountName, currency,
+             id, connectionId, gocardlessAccountId, iban, identificationHash, accountName, currency,
              balance, availableBalance, bankName, status, createdAt, updatedAt
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
           [
             id,
             connectionId,
             acc.gocardlessAccountId,
             acc.iban,
+            acc.identificationHash ?? null,
             acc.accountName ?? null,
             acc.currency ?? 'EUR',
             acc.balance ?? 0.0,

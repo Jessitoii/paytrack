@@ -19,7 +19,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const body = await parseJsonBody(req);
     const aspspName = body.institutionId || body.aspspName || 'ING';
-    const state = body.state || crypto.randomBytes(16).toString('hex');
+    let state = body.state;
+    if (!state) {
+      const stateObj = {
+        id: crypto.randomBytes(12).toString('hex'),
+        appRedirectUrl: body.appRedirectUrl || 'paytrack://bank-callback',
+      };
+      state = Buffer.from(JSON.stringify(stateObj)).toString('base64url');
+    }
 
     const { redirectUri } = getEnableBankingCredentials();
     const redirectUrl = body.redirectUrl || redirectUri || `https://${req.headers.host}/api/bank/callback`;
@@ -30,11 +37,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       ? mockStartAuthorization(aspspName, redirectUrl, state)
       : await startAuthorization(aspspName, redirectUrl, state);
 
-    console.log(`[EnableBanking Connect] Auth flow initialized successfully: sessionId=${result.sessionId || 'none'}`);
+    console.log(`[EnableBanking Connect] Auth flow initialized successfully: authFlowId=${result.authFlowId || 'none'}`);
 
     sendJson(res, 200, {
-      sessionId: result.sessionId,
-      requisitionId: result.sessionId, // backward compatibility
+      authFlowId: result.authFlowId || null,
       link: result.url,
       state,
       institutionId: aspspName,

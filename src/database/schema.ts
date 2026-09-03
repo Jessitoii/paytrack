@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const CREATE_TABLES_SQL = `
 -- 1. User Profile & Settings
@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   connectionId TEXT NOT NULL,
   gocardlessAccountId TEXT NOT NULL UNIQUE,
   iban TEXT NOT NULL,
+  identificationHash TEXT,
   accountName TEXT,
   currency TEXT NOT NULL DEFAULT 'EUR',
   balance REAL NOT NULL DEFAULT 0.0,

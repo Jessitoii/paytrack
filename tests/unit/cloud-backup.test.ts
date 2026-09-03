@@ -470,9 +470,10 @@ describe('Disaster Recovery & Cross-Device Portability Audit (Tests A - H)', () 
     );
 
     // 2. Tamper ciphertext
+    const charToFlip = vault.ciphertextBase64[10] === 'A' ? 'B' : 'A';
     const tamperedBodyVault = {
       ...vault,
-      ciphertextBase64: vault.ciphertextBase64.substring(0, 10) + 'A' + vault.ciphertextBase64.substring(11),
+      ciphertextBase64: vault.ciphertextBase64.substring(0, 10) + charToFlip + vault.ciphertextBase64.substring(11),
     };
     await expect(decryptPayload(tamperedBodyVault, masterPassword)).rejects.toThrow(
       /Incorrect backup password or corrupted backup file/
