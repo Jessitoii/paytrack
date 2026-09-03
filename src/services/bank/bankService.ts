@@ -10,9 +10,13 @@ WebBrowser.maybeCompleteAuthSession();
 const DEFAULT_API_BASE_URL = 'https://paytrack-dun.vercel.app';
 
 export function getApiBaseUrl(): string {
-  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  let envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
   if (envUrl && envUrl.length > 0) {
-    return envUrl.replace(/\/+$/, '');
+    let clean = envUrl.replace(/\/+$/, '');
+    if (clean.endsWith('/api')) {
+      clean = clean.slice(0, -4);
+    }
+    return clean;
   }
   return DEFAULT_API_BASE_URL;
 }
@@ -71,9 +75,7 @@ export const bankService = {
     const baseUrl = getApiBaseUrl();
     const redirectUrl = `${baseUrl}/api/bank/callback`;
 
-    if (__DEV__) {
-      console.log(`[BankService] Initiating bank connection to: ${baseUrl}/api/bank/connect (institution: ${institutionId})`);
-    }
+    console.log(`[BankService] Initiating bank connection: POST ${baseUrl}/api/bank/connect (institution: ${institutionId})`);
 
     // 1. Initiate Requisition / Session on Backend
     const connectRes = await fetch(`${baseUrl}/api/bank/connect`, {
@@ -90,34 +92,69 @@ export const bankService = {
     if (!connectRes.ok) {
       const errText = await connectRes.text();
       const msg = extractErrorMessage(errText, connectRes.status, 'Unable to connect to bank');
-      throw new Error(msg);
+      throw new Error(`[${connectRes.status} from ${baseUrl}/api/bank/connect] ${msg}`);
     }
 
     const connectData = await connectRes.json();
     const sessionId = connectData.sessionId || connectData.requisitionId;
     const link = connectData.link;
 
+    if (!link) {
+      throw new Error('Bank authorization link was not returned by server.');
+    }
+
+    // Safe diagnostic log of URL structure (no tokens or session keys)
+    try {
+      const parsedUrl = new URL(link);
+      const queryParamNames = Array.from(parsedUrl.searchParams.keys()).join(', ');
+      console.log(`[BankService] Opening Auth Session: domain=${parsedUrl.origin}, path=${parsedUrl.pathname}, params=[${queryParamNames}]`);
+    } catch (_) {
+      console.log('[BankService] Opening Auth Session');
+    }
+
     // 2. Open In-App Browser for User Consent
-    if (link) {
-      try {
-        const result = await WebBrowser.openAuthSessionAsync(link, 'paytrack://');
-        if (result.type === 'cancel' || result.type === 'dismiss') {
-          // Check if session was completed anyway before throwing
-        }
-      } catch (browserErr) {
-        console.warn('[BankService] WebBrowser notice:', browserErr);
+    let callbackSessionId: string | undefined;
+    let authCode: string | undefined;
+
+    try {
+      const result = await WebBrowser.openAuthSessionAsync(link, 'paytrack://');
+      console.log(`[BankService] WebBrowser session finished: type=${result.type}`);
+      if (result.type === 'success' && result.url) {
+        try {
+          const parsedReturn = new URL(result.url);
+          callbackSessionId =
+            parsedReturn.searchParams.get('session_id') ||
+            parsedReturn.searchParams.get('ref') ||
+            undefined;
+          authCode = parsedReturn.searchParams.get('code') || undefined;
+        } catch (_) {}
       }
+    } catch (browserErr: any) {
+      console.warn('[BankService] WebBrowser notice:', browserErr?.message);
     }
 
     // 3. Fetch Accounts from Backend for this Session
-    const accountsRes = await fetch(
-      `${baseUrl}/api/bank/accounts?sessionId=${encodeURIComponent(sessionId)}&requisitionId=${encodeURIComponent(sessionId)}`
-    );
+    const activeSessionId = callbackSessionId || sessionId;
+    const queryParams = new URLSearchParams();
+    if (activeSessionId) {
+      queryParams.set('sessionId', activeSessionId);
+      queryParams.set('requisitionId', activeSessionId);
+    }
+    if (authCode) {
+      queryParams.set('code', authCode);
+    }
+
+    const accountsUrl = `${baseUrl}/api/bank/accounts?${queryParams.toString()}`;
+    console.log(`[BankService] Fetching accounts: ${accountsUrl}`);
+
+    const accountsRes = await fetch(accountsUrl, {
+      headers: { Accept: 'application/json' },
+    });
 
     if (!accountsRes.ok) {
       const errText = await accountsRes.text();
       const msg = extractErrorMessage(errText, accountsRes.status, 'Unable to retrieve authorized bank accounts');
-      throw new Error(msg);
+      throw new Error(`[${accountsRes.status} from ${baseUrl}/api/bank/accounts] ${msg}`);
     }
 
     const accountsData = await accountsRes.json();

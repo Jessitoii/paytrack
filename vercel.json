@@ -3,6 +3,10 @@
   "framework": null,
   "rewrites": [
     {
+      "source": "/bank/:path*",
+      "destination": "/api/bank/:path*"
+    },
+    {
       "source": "/privacy",
       "destination": "/api/privacy"
     },

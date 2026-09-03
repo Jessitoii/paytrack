@@ -264,9 +264,17 @@ export async function startAuthorization(
     body: JSON.stringify(body),
   });
 
+  let sessionId = res.session_id;
+  if (!sessionId && res.url) {
+    try {
+      const parsed = new URL(res.url);
+      sessionId = parsed.searchParams.get('sessionid') || undefined;
+    } catch (_) {}
+  }
+
   return {
     url: res.url,
-    sessionId: res.session_id,
+    sessionId,
   };
 }
 
