@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { handleCors, sendJson, parseJsonBody } from '../lib/cors';
-import { deleteSession, isMockMode } from '../lib/enableBanking';
+import { handleCors, sendJson, parseJsonBody } from '../_lib/cors';
+import { deleteSession, isMockMode } from '../_lib/enableBanking';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;

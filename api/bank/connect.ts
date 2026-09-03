@@ -1,12 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'crypto';
-import { handleCors, sendJson, parseJsonBody } from '../lib/cors';
+import { handleCors, sendJson, parseJsonBody } from '../_lib/cors';
 import {
   startAuthorization,
   isMockMode,
   getEnableBankingCredentials,
-} from '../lib/enableBanking';
-import { mockStartAuthorization } from '../lib/mock';
+} from '../_lib/enableBanking';
+import { mockStartAuthorization } from '../_lib/mock';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;

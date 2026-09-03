@@ -7,8 +7,8 @@ import {
   mockGetAccountDetails,
   mockGetAccountBalances,
   mockGetAccountTransactions,
-} from '../../api/lib/mock';
-import { createEnableBankingJwt } from '../../api/lib/enableBanking';
+} from '../../api/_lib/mock';
+import { createEnableBankingJwt } from '../../api/_lib/enableBanking';
 
 describe('Enable Banking Provider & Mock Engine', () => {
   describe('Mock Serverless Data', () => {

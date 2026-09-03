@@ -1,18 +1,18 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
-import { handleCors, sendJson } from '../lib/cors';
+import { handleCors, sendJson } from '../_lib/cors';
 import {
   exchangeCodeForSession,
   getAccountDetails,
   getAccountBalances,
   isMockMode,
-} from '../lib/enableBanking';
+} from '../_lib/enableBanking';
 import {
   mockGetSession,
   mockGetAccountDetails,
   mockGetAccountBalances,
-} from '../lib/mock';
-import { BankAccountBalances } from '../lib/types';
+} from '../_lib/mock';
+import { BankAccountBalances } from '../_lib/types';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;

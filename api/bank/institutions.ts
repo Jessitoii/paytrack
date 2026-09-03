@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
-import { handleCors, sendJson } from '../lib/cors';
-import { getInstitutions, isMockMode } from '../lib/enableBanking';
-import { mockGetInstitutions } from '../lib/mock';
+import { handleCors, sendJson } from '../_lib/cors';
+import { getInstitutions, isMockMode } from '../_lib/enableBanking';
+import { mockGetInstitutions } from '../_lib/mock';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
