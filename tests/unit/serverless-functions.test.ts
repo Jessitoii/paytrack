@@ -125,7 +125,7 @@ describe('Serverless Functions API Suite (Enable Banking)', () => {
     expect(html).toContain('status=success');
   });
 
-  it('GET /api/bank/accounts returns authorized accounts with balances', async () => {
+  it('GET /api/bank/accounts returns authorized accounts with real account UID and balances', async () => {
     const { req, res } = createMockReqRes({
       method: 'GET',
       url: '/api/bank/accounts?sessionId=session_mock_default',
@@ -135,8 +135,22 @@ describe('Serverless Functions API Suite (Enable Banking)', () => {
     expect(res.statusCode).toBe(200);
     const data = res._getData();
     expect(data.accounts.length).toBeGreaterThan(0);
+    expect(data.accounts[0].id).not.toBe('session_mock_default'); // Must NOT use sessionId as accountId!
     expect(data.accounts[0].iban).toContain('NL91INGB');
     expect(data.accounts[0].balance).toBeGreaterThan(0);
+  });
+
+  it('GET /api/bank/accounts supports code parameter exchange', async () => {
+    const { req, res } = createMockReqRes({
+      method: 'GET',
+      url: '/api/bank/accounts?code=mock_code_123',
+    });
+    await accountsHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const data = res._getData();
+    expect(data.accounts.length).toBeGreaterThan(0);
+    expect(data.accounts[0].id).toBe('NL91INGB0001234567');
   });
 
   it('POST /api/bank/sync returns transaction list and balances', async () => {

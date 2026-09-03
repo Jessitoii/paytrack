@@ -170,7 +170,7 @@ export const bankService = {
     const connection = await bankRepository.saveConnection({
       institutionId,
       institutionName,
-      requisitionId: sessionId,
+      requisitionId: activeSessionId || sessionId,
       status: 'CONNECTED',
     });
 
@@ -192,8 +192,8 @@ export const bankService = {
     // 6. Automatically perform initial transaction sync
     try {
       await this.syncTransactions(connection.id);
-    } catch (syncErr) {
-      console.warn('[BankService] Initial sync notice:', syncErr);
+    } catch (syncErr: any) {
+      console.warn('[BankService] Initial sync notice:', syncErr?.message);
     }
 
     dbEvents.emit('finance_changed');

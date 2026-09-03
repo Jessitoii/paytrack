@@ -12,6 +12,7 @@ export interface BankSessionDetails {
   status: string; // 'AUTHORIZED' | 'LINKED' | 'EXPIRED' | 'DISCONNECTED'
   link?: string;
   accounts: string[];
+  rawAccounts?: any[];
   institutionId: string;
   institutionName: string;
   reference?: string;

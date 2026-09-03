@@ -64,6 +64,14 @@ export function mockExchangeCodeForSession(code: string): BankSessionDetails {
     id: `session_${code || 'mock'}`,
     status: 'AUTHORIZED',
     accounts: [defaultAccountId],
+    rawAccounts: [
+      {
+        uid: defaultAccountId,
+        account_id: { iban: defaultAccountId },
+        currency: 'EUR',
+        party_name: 'Alper Ozer',
+      },
+    ],
     institutionId: 'ING',
     institutionName: 'ING Netherlands',
     createdAt: new Date().toISOString(),
@@ -75,6 +83,14 @@ export function mockGetSession(sessionId: string): BankSessionDetails {
     id: sessionId || 'session_mock_default',
     status: 'AUTHORIZED',
     accounts: [defaultAccountId],
+    rawAccounts: [
+      {
+        uid: defaultAccountId,
+        account_id: { iban: defaultAccountId },
+        currency: 'EUR',
+        party_name: 'Alper Ozer',
+      },
+    ],
     institutionId: 'ING',
     institutionName: 'ING Netherlands',
     createdAt: new Date().toISOString(),

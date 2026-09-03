@@ -287,15 +287,50 @@ export async function exchangeCodeForSession(code: string): Promise<BankSessionD
     body: JSON.stringify({ code }),
   });
 
-  const accountIds: string[] = (data.accounts || []).map((acc: any) => {
-    if (typeof acc === 'string') return acc;
-    return acc.account_id?.iban || acc.uid || acc.id || JSON.stringify(acc);
-  });
+  const rawAccounts: any[] = data.accounts || [];
+  const accountIds: string[] = rawAccounts
+    .map((acc: any) => {
+      if (typeof acc === 'string') return acc;
+      // CRITICAL: acc.uid is the session-scoped account identifier needed by /accounts/{uid}/...
+      return acc.uid || acc.id || acc.account_id?.iban;
+    })
+    .filter(Boolean);
+
+  console.log(`[EnableBanking Sessions] Exchanged code for session: accountsCount=${accountIds.length}`);
 
   return {
     id: data.session_id,
-    status: 'AUTHORIZED',
+    status: data.status || 'AUTHORIZED',
     accounts: accountIds,
+    rawAccounts,
+    institutionId: data.aspsp?.name || 'ING',
+    institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Retrieves existing session details and account identifiers by session ID.
+ */
+export async function getSession(sessionId: string): Promise<BankSessionDetails> {
+  const data = await enableBankingRequest<any>(`/sessions/${encodeURIComponent(sessionId)}`);
+
+  const rawAccounts: any[] = data.accounts || [];
+  const accountIds: string[] = rawAccounts
+    .map((acc: any) => {
+      if (typeof acc === 'string') return acc;
+      // CRITICAL: acc.uid is the session-scoped account identifier needed by /accounts/{uid}/...
+      return acc.uid || acc.id || acc.account_id?.iban;
+    })
+    .filter(Boolean);
+
+  console.log(`[EnableBanking Sessions] Retrieved session: status=${data.status || 'AUTHORIZED'}, accountsCount=${accountIds.length}`);
+
+  return {
+    id: data.session_id || sessionId,
+    status: data.status || 'AUTHORIZED',
+    accounts: accountIds,
+    rawAccounts,
     institutionId: data.aspsp?.name || 'ING',
     institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
     createdAt: new Date().toISOString(),
@@ -311,11 +346,11 @@ export async function getAccountDetails(
 ): Promise<BankAccountDetails> {
   try {
     const data = await enableBankingRequest<any>(`/accounts/${encodeURIComponent(accountId)}`);
-    const iban = data.account_id?.iban || data.iban || accountId;
+    const iban = data.account_id?.iban || data.iban || '';
 
     return {
       id: accountId,
-      iban: iban.startsWith('NL') ? iban : `NL${iban}`,
+      iban: iban.startsWith('NL') ? iban : (iban ? `NL${iban}` : 'NL00INGB0000000000'),
       currency: data.currency || 'EUR',
       ownerName: data.party_name || data.ownerName,
       accountName: data.details || data.name || `${institutionName} Betaalrekening`,
@@ -323,12 +358,11 @@ export async function getAccountDetails(
       bankName: institutionName,
     };
   } catch {
-    // If /accounts/{id} is not supported directly, extract from accountId
     return {
       id: accountId,
-      iban: accountId.startsWith('NL') ? accountId : `NL${accountId}`,
+      iban: 'NL00INGB0000000000',
       currency: 'EUR',
-      accountName: `${institutionName} Checking Account`,
+      accountName: `${institutionName} Betaalrekening`,
       status: 'READY',
       bankName: institutionName,
     };
@@ -342,24 +376,53 @@ export async function getAccountBalances(accountId: string): Promise<BankAccount
   const data = await enableBankingRequest<any>(`/accounts/${encodeURIComponent(accountId)}/balances`);
   const balances: any[] = data.balances || [];
 
-  let chosen = balances.find((b) => b.balance_type === 'CLBD' || b.balance_type === 'closingBooked');
+  let chosen = balances.find(
+    (b) =>
+      b.balance_type === 'CLBD' ||
+      b.balanceType === 'CLBD' ||
+      b.balance_type === 'closingBooked' ||
+      b.balanceType === 'closingBooked'
+  );
   if (!chosen) {
-    chosen = balances.find((b) => b.balance_type === 'ITAV' || b.balance_type === 'interimAvailable') || balances[0];
+    chosen =
+      balances.find(
+        (b) =>
+          b.balance_type === 'ITAV' ||
+          b.balanceType === 'ITAV' ||
+          b.balance_type === 'interimAvailable' ||
+          b.balanceType === 'interimAvailable'
+      ) || balances[0];
   }
 
-  const rawAmount = chosen?.balance_amount?.amount ?? chosen?.balanceAmount?.amount ?? '0';
-  const amount = typeof rawAmount === 'number' ? rawAmount : parseFloat(rawAmount || '0');
-  const currency = chosen?.balance_amount?.currency ?? chosen?.balanceAmount?.currency ?? 'EUR';
+  const rawAmount = chosen?.balance_amount?.amount ?? chosen?.balanceAmount?.amount ?? chosen?.amount ?? '0';
+  let amount = typeof rawAmount === 'number' ? rawAmount : parseFloat(String(rawAmount || '0'));
+  const indicator = chosen?.credit_debit_indicator || chosen?.creditDebitIndicator;
+  if (indicator === 'DBIT' && amount > 0) {
+    amount = -amount;
+  }
+  const currency = chosen?.balance_amount?.currency ?? chosen?.balanceAmount?.currency ?? chosen?.currency ?? 'EUR';
 
-  const avail = balances.find((b) => b.balance_type === 'ITAV' || b.balance_type === 'interimAvailable');
-  const rawAvail = avail?.balance_amount?.amount ?? avail?.balanceAmount?.amount;
-  const availAmount = rawAvail !== undefined ? (typeof rawAvail === 'number' ? rawAvail : parseFloat(rawAvail)) : null;
+  const avail = balances.find(
+    (b) =>
+      b.balance_type === 'ITAV' ||
+      b.balanceType === 'ITAV' ||
+      b.balance_type === 'interimAvailable' ||
+      b.balanceType === 'interimAvailable'
+  );
+  const rawAvail = avail?.balance_amount?.amount ?? avail?.balanceAmount?.amount ?? avail?.amount;
+  let availAmount = rawAvail !== undefined ? (typeof rawAvail === 'number' ? rawAvail : parseFloat(String(rawAvail))) : null;
+  const availIndicator = avail?.credit_debit_indicator || avail?.creditDebitIndicator;
+  if (availIndicator === 'DBIT' && availAmount !== null && availAmount > 0) {
+    availAmount = -availAmount;
+  }
+
+  console.log(`[EnableBanking Balances] Parsed balance: amount=${amount.toFixed(2)}, currency=${currency}`);
 
   return {
     balance: Number(amount.toFixed(2)),
     availableBalance: availAmount !== null && !isNaN(availAmount) ? Number(availAmount.toFixed(2)) : null,
     currency,
-    referenceDate: chosen?.reference_date || chosen?.last_change_date_time,
+    referenceDate: chosen?.reference_date || chosen?.referenceDate || chosen?.last_change_date_time,
   };
 }
 
@@ -376,39 +439,75 @@ export async function getAccountTransactions(
   }
 
   const data = await enableBankingRequest<any>(endpoint);
-  const rawTransactions: any[] = data.transactions || [];
+  let rawTransactions: any[] = [];
+  if (Array.isArray(data)) {
+    rawTransactions = data;
+  } else if (Array.isArray(data.transactions)) {
+    rawTransactions = data.transactions;
+  } else if (data.transactions && typeof data.transactions === 'object') {
+    const booked = Array.isArray(data.transactions.booked) ? data.transactions.booked : [];
+    const pending = Array.isArray(data.transactions.pending) ? data.transactions.pending : [];
+    rawTransactions = [...booked, ...pending];
+  }
+
+  console.log(`[EnableBanking Transactions] Retrieved count=${rawTransactions.length}`);
 
   return rawTransactions.map((tx: any) => {
-    const rawAmount = tx.transaction_amount?.amount ?? tx.transactionAmount?.amount ?? 0;
-    const amount = typeof rawAmount === 'number' ? rawAmount : parseFloat(rawAmount || '0');
-    const currency = tx.transaction_amount?.currency ?? tx.transactionAmount?.currency ?? 'EUR';
+    const rawAmount = tx.transaction_amount?.amount ?? tx.transactionAmount?.amount ?? tx.amount ?? 0;
+    let amount = typeof rawAmount === 'number' ? rawAmount : parseFloat(String(rawAmount || '0'));
+    const indicator = tx.credit_debit_indicator || tx.creditDebitIndicator;
+    // Standard banking convention in PayTrack: Debits/expenses are negative
+    if (indicator === 'DBIT' && amount > 0) {
+      amount = -amount;
+    } else if (indicator === 'CRDT' && amount < 0) {
+      amount = Math.abs(amount);
+    }
+
+    const currency = tx.transaction_amount?.currency ?? tx.transactionAmount?.currency ?? tx.currency ?? 'EUR';
 
     let remittance: string | null = null;
     if (Array.isArray(tx.remittance_information)) {
       remittance = tx.remittance_information.join(' ');
+    } else if (Array.isArray(tx.remittanceInformation)) {
+      remittance = tx.remittanceInformation.join(' ');
     } else if (typeof tx.remittance_information === 'string') {
       remittance = tx.remittance_information;
+    } else if (typeof tx.remittanceInformation === 'string') {
+      remittance = tx.remittanceInformation;
     } else if (tx.remittance_information_unstructured) {
       remittance = tx.remittance_information_unstructured;
+    } else if (tx.description) {
+      remittance = tx.description;
     }
+
+    const bookingDate =
+      tx.booking_date ||
+      tx.bookingDate ||
+      tx.transaction_date ||
+      tx.transactionDate ||
+      tx.value_date ||
+      tx.valueDate ||
+      new Date().toISOString().substring(0, 10);
 
     const txId =
       tx.entry_reference ||
+      tx.entryReference ||
       tx.transaction_id ||
+      tx.transactionId ||
       tx.id ||
-      `${accountId}_${tx.booking_date || tx.transaction_date}_${amount}`;
+      `${accountId}_${bookingDate}_${amount}`;
 
-    const isBooked = !tx.status || tx.status === 'BOOK' || tx.status === 'BOOKED';
+    const isBooked = !tx.status || tx.status === 'BOOK' || tx.status === 'BOOKED' || tx.status === 'booked';
 
     return {
-      transactionId: txId,
+      transactionId: String(txId),
       amount: Number(amount.toFixed(2)),
       currency,
-      bookingDate: tx.booking_date || tx.transaction_date || tx.value_date || new Date().toISOString().substring(0, 10),
-      valueDate: tx.value_date || null,
+      bookingDate,
+      valueDate: tx.value_date || tx.valueDate || null,
       remittanceInformation: remittance ? remittance.trim() : null,
-      creditorName: tx.creditor?.name || tx.creditor_name || null,
-      debtorName: tx.debtor?.name || tx.debtor_name || null,
+      creditorName: tx.creditor?.name || tx.creditor_name || tx.creditorName || null,
+      debtorName: tx.debtor?.name || tx.debtor_name || tx.debtorName || null,
       status: isBooked ? 'BOOKED' : 'PENDING',
     };
   });

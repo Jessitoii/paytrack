@@ -196,17 +196,18 @@ export const bankRepository = {
 
     for (const acc of accounts) {
       const existing = await db.queryFirst<any>(
-        'SELECT id FROM bank_accounts WHERE gocardlessAccountId = ?;',
-        [acc.gocardlessAccountId]
+        'SELECT id FROM bank_accounts WHERE gocardlessAccountId = ? OR (connectionId = ? AND iban = ?);',
+        [acc.gocardlessAccountId, connectionId, acc.iban]
       );
 
       if (existing) {
         await db.execute(
           `UPDATE bank_accounts SET
-             iban = ?, accountName = ?, currency = ?, balance = ?, availableBalance = ?,
+             gocardlessAccountId = ?, iban = ?, accountName = ?, currency = ?, balance = ?, availableBalance = ?,
              bankName = ?, status = ?, updatedAt = ?
            WHERE id = ?;`,
           [
+            acc.gocardlessAccountId,
             acc.iban,
             acc.accountName ?? null,
             acc.currency ?? 'EUR',
