@@ -29,10 +29,20 @@ function formatPrivateKey(rawKey: string): string {
     key = key.slice(1, -1).trim();
   }
 
+  // Case 1: The entire PEM file was base64-encoded (e.g. starts with 'LS0t' which is '---' in base64)
+  if (key.startsWith('LS0t') || (!key.includes('-----') && key.length > 500)) {
+    try {
+      const decoded = Buffer.from(key, 'base64').toString('utf8');
+      if (decoded.includes('-----BEGIN')) {
+        key = decoded.trim();
+      }
+    } catch (_) {}
+  }
+
   // Normalize escaped newlines (\r\n or \n) to real newlines
   key = key.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
 
-  // Handle all PEM keys: extract header, base64 body, and footer, then format with standard 64-char lines
+  // Case 2: Standard PEM (or single-line PEM with spaces) containing -----BEGIN and -----END
   if (key.includes('-----BEGIN') && key.includes('-----END')) {
     const headerMatch = key.match(/(-----BEGIN[A-Z0-9\s_-]+-----)/i);
     const footerMatch = key.match(/(-----END[A-Z0-9\s_-]+-----)/i);
@@ -47,6 +57,25 @@ function formatPrivateKey(rawKey: string): string {
       const wrappedBody = rawBody.match(/.{1,64}/g)?.join('\n') || rawBody;
       return `${header}\n${wrappedBody}\n${footer}\n`;
     }
+  }
+
+  // Case 3: Raw base64 string provided WITHOUT headers
+  const cleaned = key.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/=]+$/.test(cleaned) && cleaned.length > 200) {
+    const wrappedBody = cleaned.match(/.{1,64}/g)?.join('\n') || cleaned;
+    // Try PKCS#8 first
+    const candidate8 = `-----BEGIN PRIVATE KEY-----\n${wrappedBody}\n-----END PRIVATE KEY-----\n`;
+    try {
+      crypto.createPrivateKey({ key: candidate8, format: 'pem' });
+      return candidate8;
+    } catch (_) {}
+
+    // Try PKCS#1
+    const candidate1 = `-----BEGIN RSA PRIVATE KEY-----\n${wrappedBody}\n-----END RSA PRIVATE KEY-----\n`;
+    try {
+      crypto.createPrivateKey({ key: candidate1, format: 'pem' });
+      return candidate1;
+    } catch (_) {}
   }
 
   return key;
