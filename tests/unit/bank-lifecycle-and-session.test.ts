@@ -4,6 +4,7 @@ import { initializeDatabase } from '../../src/database/init';
 import { bankRepository } from '../../src/database/repositories/bankRepository';
 import { financeRepository } from '../../src/database/repositories/financeRepository';
 import connectHandler from '../../api/bank/connect';
+import callbackHandler from '../../api/bank/callback';
 import accountsHandler from '../../api/bank/accounts';
 import syncHandler from '../../api/bank/sync';
 import disconnectHandler from '../../api/bank/disconnect';
@@ -134,6 +135,61 @@ describe('Complete Enable Banking Lifecycle & Session Robustness Suite', () => {
     expect(res.statusCode).toBe(200);
     const data = res._getData();
     expect(data.success).toBe(true);
+  });
+
+  // 5b. Callback idempotency: duplicate callback does not call exchange a second time
+  it('5b. Duplicate callback with identical code/state is idempotent and reuses cached session', async () => {
+    const testCode = 'code_idempotent_test_456';
+    const testState = 'state_idempotent_test_789';
+
+    // First callback execution
+    const call1 = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/callback?code=${testCode}&state=${testState}&status=success`,
+    });
+    await callbackHandler(call1.req, call1.res);
+    expect(call1.res.statusCode).toBe(200);
+    const html1 = call1.res._getBody();
+    expect(html1).toContain('session_id=session_code_idempotent_test_456');
+
+    // Second callback execution (simulating browser reload or double redirect)
+    const call2 = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/callback?code=${testCode}&state=${testState}&status=success`,
+    });
+    await callbackHandler(call2.req, call2.res);
+    expect(call2.res.statusCode).toBe(200);
+    const html2 = call2.res._getBody();
+    // Must still succeed and reuse the exact session ID without throwing
+    expect(html2).toContain('session_id=session_code_idempotent_test_456');
+    expect(html2).toContain('ING Authorization Complete');
+  });
+
+  // 5c. Mobile fallback: /api/bank/accounts?state=... retrieves session when deep link was interrupted
+  it('5c. Mobile fallback retrieves authorized session using state parameter alone', async () => {
+    const fallbackState = 'state_interrupted_fallback_999';
+    const fallbackCode = 'code_interrupted_fallback_888';
+
+    // Callback arrives and authorizes
+    const cb = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/callback?code=${fallbackCode}&state=${fallbackState}&status=success`,
+    });
+    await callbackHandler(cb.req, cb.res);
+    expect(cb.res.statusCode).toBe(200);
+
+    // Mobile app had its deep-link interrupted, so it queries accounts endpoint using ONLY state
+    const accReq = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/accounts?state=${fallbackState}`,
+    });
+    await accountsHandler(accReq.req, accReq.res);
+
+    expect(accReq.res.statusCode).toBe(200);
+    const data = accReq.res._getData();
+    expect(data.sessionId).toBe('session_code_interrupted_fallback_888');
+    expect(data.accounts.length).toBeGreaterThan(0);
+    expect(data.accounts[0].id).toBe('NL91INGB0001234567');
   });
 
   // 6. Reauthorization with a new session correctly replaces the old session/account mapping

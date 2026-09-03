@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import { handleCors, sendHtml } from '../_lib/cors';
-import { exchangeCodeForSession, isMockMode } from '../_lib/enableBanking';
+import { exchangeCodeForSession, getCachedSession, setCachedSession, isMockMode } from '../_lib/enableBanking';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
@@ -25,25 +25,75 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     } catch (_) {}
   }
 
-  // If code is received and we don't have a session ID yet, exchange it for session
+  // 1. Check if session was already cached by state or code (idempotent callback handling)
+  if (!sessionId) {
+    const cached = (code ? getCachedSession(code) : null) || (state ? getCachedSession(state) : null);
+    if (cached) {
+      sessionId = cached.id;
+      console.log(`[EnableBanking Callback] Reusing existing cached session: id=${sessionId}`);
+    }
+  }
+
+  // 2. If code is received and not already exchanged, exchange it for session
   if (code && !sessionId && status === 'success') {
     if (isMockMode()) {
       sessionId = `session_${code}`;
+      setCachedSession(
+        {
+          id: sessionId,
+          status: 'AUTHORIZED',
+          accounts: ['NL91INGB0001234567'],
+          rawAccounts: [
+            {
+              uid: 'NL91INGB0001234567',
+              account_id: { iban: 'NL91INGB0001234567' },
+              identification_hash: 'hash_mock_ing',
+              currency: 'EUR',
+            },
+          ],
+          institutionId: 'ING',
+          institutionName: 'ING Netherlands',
+          createdAt: new Date().toISOString(),
+        },
+        state,
+        code
+      );
     } else {
       try {
         const session = await exchangeCodeForSession(code, state);
         sessionId = session.id;
       } catch (err: any) {
-        console.error('[Enable Banking callback code exchange error]', err?.message);
-        status = 'error';
+        if (err?.code === 'BANK_AUTH_SESSION_ALREADY_AUTHORIZED') {
+          console.warn('[EnableBanking Callback] Session already authorized. Attempting cache recovery...');
+          const cached = (code ? getCachedSession(code) : null) || (state ? getCachedSession(state) : null);
+          if (cached) {
+            sessionId = cached.id;
+            status = 'success';
+          } else {
+            console.warn('[EnableBanking Callback] Session authorized on Enable Banking; propagating already_authorized state');
+            status = 'already_authorized';
+          }
+        } else {
+          console.error('[Enable Banking callback code exchange error]', err?.message);
+          status = 'error';
+        }
       }
     }
   }
 
   const querySep = appRedirectUrl.includes('?') ? '&' : '?';
-  const deepLink = `${appRedirectUrl}${querySep}session_id=${encodeURIComponent(sessionId)}&ref=${encodeURIComponent(sessionId)}&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&status=${encodeURIComponent(status)}&error=${encodeURIComponent(error || errorDescription)}`;
+  const queryParts = [
+    sessionId ? `session_id=${encodeURIComponent(sessionId)}` : '',
+    sessionId ? `ref=${encodeURIComponent(sessionId)}` : '',
+    !sessionId && code ? `code=${encodeURIComponent(code)}` : '',
+    state ? `state=${encodeURIComponent(state)}` : '',
+    `status=${encodeURIComponent(status)}`,
+    error || errorDescription ? `error=${encodeURIComponent(error || errorDescription)}` : '',
+  ].filter(Boolean).join('&');
 
-  const isSuccess = status === 'success';
+  const deepLink = `${appRedirectUrl}${querySep}${queryParts}`;
+
+  const isSuccess = status === 'success' || status === 'already_authorized';
 
   const html = `
 <!DOCTYPE html>
@@ -124,6 +174,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     <div class="note">If the app does not open automatically, tap the button above.</div>
   </div>
   <script>
+    try {
+      if (window.history && window.history.replaceState && "${sessionId}") {
+        window.history.replaceState({}, '', window.location.pathname + '?session_id=' + encodeURIComponent("${sessionId}") + '&status=${status}');
+      }
+    } catch (_) {}
     setTimeout(function() {
       window.location.href = "${deepLink}";
     }, 400);

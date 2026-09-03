@@ -144,8 +144,8 @@ export const bankService = {
     const queryParams = new URLSearchParams();
     if (callbackSessionId) {
       queryParams.set('sessionId', callbackSessionId);
-    }
-    if (authCode) {
+      // NOTE: Do NOT pass code when sessionId is already available, preventing duplicate code exchange
+    } else if (authCode) {
       queryParams.set('code', authCode);
     }
     const stateToPass = returnState || authState;
@@ -162,6 +162,23 @@ export const bankService = {
 
     if (!accountsRes.ok) {
       const errText = await accountsRes.text();
+
+      // Handle ALREADY_AUTHORIZED: recover existing active connection if present
+      if (accountsRes.status === 422 && errText.includes('BANK_AUTH_SESSION_ALREADY_AUTHORIZED')) {
+        const existingConn = await bankRepository.getActiveConnection();
+        if (existingConn) {
+          const existingAccounts = await bankRepository.listAccounts(existingConn.id);
+          if (existingAccounts.length > 0) {
+            console.log('[BankService] Reusing existing connection for already-authorized session');
+            try {
+              await this.syncTransactions(existingConn.id);
+            } catch (_) {}
+            dbEvents.emit('finance_changed');
+            return { connection: existingConn, accounts: existingAccounts };
+          }
+        }
+      }
+
       const msg = extractErrorMessage(errText, accountsRes.status, 'Unable to retrieve authorized bank accounts');
       throw new Error(`[${accountsRes.status} from ${baseUrl}/api/bank/accounts] ${msg}`);
     }

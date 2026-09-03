@@ -232,14 +232,21 @@ export async function getInstitutions(country = 'NL'): Promise<BankInstitution[]
   }
 }
 
-// In-memory serverless session cache (survives warm container invocations, keyed by sessionId and state)
+// In-memory serverless session cache (survives warm container invocations, keyed by sessionId, state, and code)
 interface CachedSession {
   session: BankSessionDetails;
   cachedAt: number;
 }
 const sessionCache = new Map<string, CachedSession>();
 
-export function setCachedSession(session: BankSessionDetails, state?: string): void {
+// In-flight request deduplication map to prevent concurrent duplicate POST /sessions calls
+const inFlightExchanges = new Map<string, Promise<BankSessionDetails>>();
+
+export function setCachedSession(
+  session: BankSessionDetails,
+  state?: string,
+  code?: string
+): void {
   const now = Date.now();
   const entry: CachedSession = { session, cachedAt: now };
   if (session.id) {
@@ -247,6 +254,9 @@ export function setCachedSession(session: BankSessionDetails, state?: string): v
   }
   if (state) {
     sessionCache.set(state, entry);
+  }
+  if (code) {
+    sessionCache.set(code, entry);
   }
 }
 
@@ -317,38 +327,81 @@ export async function startAuthorization(
 
 /**
  * Exchanges the authorization code received in the callback for an active session.
+ * Protects against duplicate code submissions and recovers existing sessions on 422 ALREADY_AUTHORIZED.
  */
 export async function exchangeCodeForSession(code: string, state?: string): Promise<BankSessionDetails> {
-  const data = await enableBankingRequest<any>('/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ code }),
-  });
+  // 1. Check if session was already exchanged and cached for this code or state
+  const cached = getCachedSession(code) || (state ? getCachedSession(state) : null);
+  if (cached) {
+    console.log(`[EnableBanking Sessions] Reusing cached session for code/state: id=${cached.id}`);
+    return cached;
+  }
 
-  const rawAccounts: any[] = data.accounts || [];
-  const accountIds: string[] = rawAccounts
-    .map((acc: any) => {
-      if (typeof acc === 'string') return acc;
-      // CRITICAL: acc.uid is the session-scoped account identifier needed by /accounts/{uid}/...
-      return acc.uid || acc.id || acc.account_id?.iban;
-    })
-    .filter(Boolean);
+  // 2. Check if an exchange for this code is currently in flight (concurrent duplicate protection)
+  const existingPromise = inFlightExchanges.get(code);
+  if (existingPromise) {
+    console.log(`[EnableBanking Sessions] Awaiting existing in-flight exchange for code`);
+    return await existingPromise;
+  }
 
-  console.log(`[EnableBanking Sessions] Exchanged code for session: accountsCount=${accountIds.length}`);
+  // 3. Execute POST /sessions with in-flight tracking
+  const exchangePromise = (async () => {
+    try {
+      const data = await enableBankingRequest<any>('/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      });
 
-  const sessionDetails: BankSessionDetails = {
-    id: data.session_id,
-    status: data.status || 'AUTHORIZED',
-    accounts: accountIds,
-    rawAccounts,
-    institutionId: data.aspsp?.name || 'ING',
-    institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
-    createdAt: new Date().toISOString(),
-  };
+      const rawAccounts: any[] = data.accounts || [];
+      const accountIds: string[] = rawAccounts
+        .map((acc: any) => {
+          if (typeof acc === 'string') return acc;
+          return acc.uid || acc.id || acc.account_id?.iban;
+        })
+        .filter(Boolean);
 
-  // Cache session so subsequent accounts calls can find it even if called with state or sessionId
-  setCachedSession(sessionDetails, state);
+      console.log(`[EnableBanking Sessions] Exchanged code for session: accountsCount=${accountIds.length}`);
 
-  return sessionDetails;
+      const sessionDetails: BankSessionDetails = {
+        id: data.session_id,
+        status: data.status || 'AUTHORIZED',
+        accounts: accountIds,
+        rawAccounts,
+        institutionId: data.aspsp?.name || 'ING',
+        institutionName: data.aspsp?.title || data.aspsp?.name || 'ING Netherlands',
+        createdAt: new Date().toISOString(),
+      };
+
+      setCachedSession(sessionDetails, state, code);
+      return sessionDetails;
+    } catch (err: any) {
+      const isAlreadyAuthorized =
+        err?.message?.includes('already authorized') ||
+        err?.message?.includes('ALREADY_AUTHORIZED') ||
+        err?.status === 422;
+
+      if (isAlreadyAuthorized) {
+        // Attempt recovery from cache
+        const recovered = getCachedSession(code) || (state ? getCachedSession(state) : null);
+        if (recovered) {
+          console.log(`[EnableBanking Sessions] 422 Session already authorized: recovered from cache id=${recovered.id}`);
+          return recovered;
+        }
+
+        console.warn(`[EnableBanking Sessions] 422 Session is already authorized and not in local memory`);
+        const alreadyAuthErr = new Error('Session is already authorized');
+        (alreadyAuthErr as any).code = 'BANK_AUTH_SESSION_ALREADY_AUTHORIZED';
+        (alreadyAuthErr as any).statusCode = 422;
+        throw alreadyAuthErr;
+      }
+      throw err;
+    } finally {
+      inFlightExchanges.delete(code);
+    }
+  })();
+
+  inFlightExchanges.set(code, exchangePromise);
+  return await exchangePromise;
 }
 
 /**

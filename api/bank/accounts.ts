@@ -4,6 +4,7 @@ import { handleCors, sendJson } from '../_lib/cors';
 import {
   exchangeCodeForSession,
   getSession,
+  getCachedSession,
   getAccountDetails,
   getAccountBalances,
   isMockMode,
@@ -38,19 +39,40 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     let sessionData: any = null;
 
     if (mock) {
-      sessionData = mockGetSession(sessionId || 'session_mock');
+      sessionData =
+        (sessionId ? getCachedSession(sessionId) : null) ||
+        (state ? getCachedSession(state) : null) ||
+        (code ? getCachedSession(code) : null) ||
+        mockGetSession(sessionId || 'session_mock');
       resolvedSessionId = sessionData.id;
     } else {
-      if (code) {
-        console.log('[EnableBanking Accounts] Exchanging code for session...');
-        sessionData = await exchangeCodeForSession(code, state || undefined);
-      } else if (sessionId) {
+      // 1. If sessionId is provided, fetch existing authorized session directly (do not call POST /sessions!)
+      if (sessionId) {
         console.log(`[EnableBanking Accounts] Fetching session details for sessionId...`);
         sessionData = await getSession(sessionId);
-      } else if (state) {
-        console.log(`[EnableBanking Accounts] Checking session cache for state...`);
-        sessionData = getSession(state); // getSession checks cache by key
       }
+      // 2. If no sessionId, but state is provided, check if session is cached under state
+      else if (state && getCachedSession(state)) {
+        console.log(`[EnableBanking Accounts] Found session in cache for state...`);
+        sessionData = getCachedSession(state);
+      }
+      // 3. If code is provided, check cache first to avoid duplicate exchange errors
+      else if (code) {
+        const cached = getCachedSession(code) || (state ? getCachedSession(state) : null);
+        if (cached) {
+          console.log(`[EnableBanking Accounts] Found session in cache for code/state...`);
+          sessionData = cached;
+        } else {
+          console.log('[EnableBanking Accounts] Exchanging code for session...');
+          sessionData = await exchangeCodeForSession(code, state || undefined);
+        }
+      }
+      // 4. Fallback: check cache for state
+      else if (state) {
+        console.log(`[EnableBanking Accounts] Checking session cache for state...`);
+        sessionData = getCachedSession(state);
+      }
+
       resolvedSessionId = sessionData?.id || sessionData?.session_id || sessionId;
     }
 
@@ -123,6 +145,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       accounts: validAccounts,
     });
   } catch (err: any) {
+    const isAlreadyAuthorized =
+      err?.code === 'BANK_AUTH_SESSION_ALREADY_AUTHORIZED' ||
+      err?.message?.includes('already authorized') ||
+      err?.message?.includes('ALREADY_AUTHORIZED');
+
+    if (isAlreadyAuthorized) {
+      console.warn('[EnableBanking Accounts] Session already authorized, returning structured 422');
+      sendJson(res, 422, {
+        error: 'Bank authorization already completed; recovering the existing session.',
+        code: 'BANK_AUTH_SESSION_ALREADY_AUTHORIZED',
+        reauthRequired: false,
+        details: err?.message,
+      });
+      return;
+    }
+
     const is404 =
       err?.statusCode === 404 ||
       err?.code === 'BANK_SESSION_NOT_FOUND' ||
