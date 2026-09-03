@@ -17,6 +17,30 @@ export function getApiBaseUrl(): string {
   return DEFAULT_API_BASE_URL;
 }
 
+function extractErrorMessage(errText: string, status: number, fallback: string): string {
+  if (!errText || errText.trim().length === 0) {
+    return `${fallback} (${status})`;
+  }
+  try {
+    const parsed = JSON.parse(errText);
+    if (parsed.details && parsed.error) {
+      return `${parsed.error}: ${parsed.details}`;
+    }
+    if (parsed.error) {
+      return typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+    }
+    if (parsed.message) {
+      return typeof parsed.message === 'string' ? parsed.message : JSON.stringify(parsed.message);
+    }
+    if (parsed.detail) {
+      return typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
+    }
+    return JSON.stringify(parsed);
+  } catch (_) {
+    return errText.trim().slice(0, 250);
+  }
+}
+
 export interface BankSyncResult {
   accountsCount: number;
   transactionsInserted: number;
@@ -65,11 +89,7 @@ export const bankService = {
 
     if (!connectRes.ok) {
       const errText = await connectRes.text();
-      let msg = 'Unable to connect to bank. Please check server configuration.';
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.error) msg = errJson.error;
-      } catch (_) {}
+      const msg = extractErrorMessage(errText, connectRes.status, 'Unable to connect to bank');
       throw new Error(msg);
     }
 
@@ -95,7 +115,9 @@ export const bankService = {
     );
 
     if (!accountsRes.ok) {
-      throw new Error('Unable to retrieve authorized bank accounts. Please try again.');
+      const errText = await accountsRes.text();
+      const msg = extractErrorMessage(errText, accountsRes.status, 'Unable to retrieve authorized bank accounts');
+      throw new Error(msg);
     }
 
     const accountsData = await accountsRes.json();

@@ -24,9 +24,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const { redirectUri } = getEnableBankingCredentials();
     const redirectUrl = body.redirectUrl || redirectUri || `https://${req.headers.host}/api/bank/callback`;
 
+    console.log(`[EnableBanking Connect] Initiating auth flow: aspsp=${aspspName}, redirectUrl=${redirectUrl}`);
+
     const result = isMockMode()
       ? mockStartAuthorization(aspspName, redirectUrl, state)
       : await startAuthorization(aspspName, redirectUrl, state);
+
+    console.log(`[EnableBanking Connect] Auth flow initialized successfully: sessionId=${result.sessionId || 'none'}`);
 
     sendJson(res, 200, {
       sessionId: result.sessionId,
@@ -37,10 +41,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       institutionName: aspspName === 'ING' ? 'ING Netherlands' : aspspName,
     });
   } catch (err: any) {
-    console.error('[Enable Banking connect error]', err);
+    const cleanError = err?.message || 'Internal error';
+    console.error(`[EnableBanking Connect Error] status=500, message=${cleanError}`);
     sendJson(res, 500, {
       error: 'Failed to initiate bank connection with Enable Banking',
-      details: err.message,
+      details: cleanError,
     });
   }
 }

@@ -21,11 +21,35 @@ export function getEnableBankingCredentials(): {
 }
 
 function formatPrivateKey(rawKey: string): string {
+  if (!rawKey) return '';
   let key = rawKey.trim();
+
+  // Strip wrapping double or single quotes if present (common when pasting into env editors)
   if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
     key = key.slice(1, -1).trim();
   }
-  return key.replace(/\\n/g, '\n');
+
+  // Normalize escaped newlines (\r\n or \n) to real newlines
+  key = key.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+
+  // Handle all PEM keys: extract header, base64 body, and footer, then format with standard 64-char lines
+  if (key.includes('-----BEGIN') && key.includes('-----END')) {
+    const headerMatch = key.match(/(-----BEGIN[A-Z0-9\s_-]+-----)/i);
+    const footerMatch = key.match(/(-----END[A-Z0-9\s_-]+-----)/i);
+    if (headerMatch && footerMatch) {
+      const header = headerMatch[1].trim();
+      const footer = footerMatch[1].trim();
+      const startIndex = key.indexOf(headerMatch[0]) + headerMatch[0].length;
+      const endIndex = key.indexOf(footerMatch[0]);
+      // Extract the raw base64 body, stripping all whitespace/newlines
+      const rawBody = key.substring(startIndex, endIndex).replace(/\s+/g, '');
+      // Standard PEM wraps base64 body at 64 characters per line
+      const wrappedBody = rawBody.match(/.{1,64}/g)?.join('\n') || rawBody;
+      return `${header}\n${wrappedBody}\n${footer}\n`;
+    }
+  }
+
+  return key;
 }
 
 export function isMockMode(): boolean {
@@ -68,10 +92,34 @@ export function createEnableBankingJwt(): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(signingInput);
-  signer.end();
-  const signature = signer.sign(formattedKey, 'base64url');
+  let keyObj: crypto.KeyObject;
+  try {
+    keyObj = crypto.createPrivateKey({
+      key: formattedKey,
+      format: 'pem',
+    });
+  } catch (parseErr: any) {
+    const hasBegin = formattedKey.includes('-----BEGIN');
+    const hasEnd = formattedKey.includes('-----END');
+    const pemType = formattedKey.includes('RSA PRIVATE KEY') ? 'PKCS#1' : (formattedKey.includes('PRIVATE KEY') ? 'PKCS#8' : 'UNKNOWN');
+    console.error(`[EnableBanking PrivateKey Error] Failed to parse PEM key. hasBegin=${hasBegin}, hasEnd=${hasEnd}, pemType=${pemType}, length=${formattedKey.length}, error=${parseErr?.message}`);
+    throw new Error(
+      `Failed to parse Enable Banking RSA private key: ${parseErr?.message || 'Invalid PEM format'}. Please ensure the full PEM key (including -----BEGIN ... and -----END ...) is correctly set in Vercel environment variables.`
+    );
+  }
+
+  console.log(`[EnableBanking JWT] Private key parsed successfully. type=${keyObj.asymmetricKeyType}, modulusLength=${keyObj.asymmetricKeyDetails?.modulusLength || 'unknown'}`);
+
+  let signature: string;
+  try {
+    const signer = crypto.createSign('RSA-SHA256');
+    signer.update(signingInput);
+    signer.end();
+    signature = signer.sign(keyObj, 'base64url');
+  } catch (signErr: any) {
+    console.error(`[EnableBanking JWT Sign Error] message=${signErr?.message}`);
+    throw new Error(`Failed to sign JWT with Enable Banking private key: ${signErr?.message}`);
+  }
 
   return `${signingInput}.${signature}`;
 }
@@ -93,7 +141,9 @@ async function enableBankingRequest<T>(
     ...((options.headers as Record<string, string>) || {}),
   };
 
+  console.log(`[EnableBanking API Request] ${options.method || 'GET'} ${endpoint}`);
   const res = await fetch(url, { ...options, headers });
+  console.log(`[EnableBanking API Response] ${options.method || 'GET'} ${endpoint} -> status=${res.status}`);
 
   if (!res.ok) {
     const errBody = await res.text();
@@ -103,9 +153,11 @@ async function enableBankingRequest<T>(
       const parsed = JSON.parse(errBody);
       if (parsed.message) cleanMsg += `: ${parsed.message}`;
       else if (parsed.error) cleanMsg += `: ${parsed.error}`;
+      else if (parsed.detail) cleanMsg += `: ${parsed.detail}`;
     } catch {
-      cleanMsg += `: Request failed`;
+      cleanMsg += `: ${errBody.slice(0, 100)}`;
     }
+    console.error(`[EnableBanking API Error] status=${res.status}, message=${cleanMsg}`);
     throw new Error(cleanMsg);
   }
 

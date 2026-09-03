@@ -84,7 +84,15 @@ export function BankConnectionCard() {
       );
     },
     onError: (err: any) => {
-      showError('Connection Failed', err.message || 'Unable to connect to ING. Please try again.');
+      let errMsg = 'Unable to connect to ING. Please try again.';
+      if (err instanceof Error && err.message) {
+        errMsg = err.message;
+      } else if (typeof err === 'string' && err.trim().length > 0) {
+        errMsg = err;
+      } else if (err && typeof err === 'object') {
+        errMsg = err.message || err.error || err.detail || (typeof err.details === 'string' ? err.details : JSON.stringify(err));
+      }
+      showError('Connection Failed', errMsg);
     },
   });
 
@@ -99,7 +107,11 @@ export function BankConnectionCard() {
       );
     },
     onError: (err: any) => {
-      showError('Sync Error', err.message || 'Unable to sync bank transactions right now.');
+      let errMsg = 'Unable to sync bank transactions right now.';
+      if (err instanceof Error && err.message) errMsg = err.message;
+      else if (typeof err === 'string' && err.trim().length > 0) errMsg = err;
+      else if (err && typeof err === 'object') errMsg = err.message || err.error || JSON.stringify(err);
+      showError('Sync Error', errMsg);
     },
   });
 
@@ -111,7 +123,11 @@ export function BankConnectionCard() {
       showSuccess('Bank Disconnected', res.message);
     },
     onError: (err: any) => {
-      showError('Disconnect Error', err.message || 'Could not disconnect bank connection.');
+      let errMsg = 'Could not disconnect bank connection.';
+      if (err instanceof Error && err.message) errMsg = err.message;
+      else if (typeof err === 'string' && err.trim().length > 0) errMsg = err;
+      else if (err && typeof err === 'object') errMsg = err.message || err.error || JSON.stringify(err);
+      showError('Disconnect Error', errMsg);
     },
   });
 
