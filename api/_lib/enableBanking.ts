@@ -22,10 +22,10 @@ export function getEnableBankingCredentials(): {
 
 function formatPrivateKey(rawKey: string): string {
   let key = rawKey.trim();
-  if (!key.includes('\n') && key.includes('\\n')) {
-    key = key.replace(/\\n/g, '\n');
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
   }
-  return key;
+  return key.replace(/\\n/g, '\n');
 }
 
 export function isMockMode(): boolean {

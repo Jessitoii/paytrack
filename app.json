@@ -40,6 +40,9 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "apiUrl": "https://paytrack-dun.vercel.app"
     }
   }
 }

@@ -7,15 +7,14 @@ import { categorizeTransaction } from './categorizer';
 // Ensure any redirect in auth session is handled
 WebBrowser.maybeCompleteAuthSession();
 
-function getApiBaseUrl(): string {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+const DEFAULT_API_BASE_URL = 'https://paytrack-dun.vercel.app';
+
+export function getApiBaseUrl(): string {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (envUrl && envUrl.length > 0) {
+    return envUrl.replace(/\/+$/, '');
   }
-  // If running in Android emulator, localhost is 10.0.2.2
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:3000';
-  }
-  return 'http://localhost:3000';
+  return DEFAULT_API_BASE_URL;
 }
 
 export interface BankSyncResult {
@@ -30,6 +29,9 @@ export interface BankSyncResult {
 export const bankService = {
   async getInstitutions(country = 'NL') {
     const baseUrl = getApiBaseUrl();
+    if (__DEV__) {
+      console.log(`[BankService] Fetching institutions from: ${baseUrl}/api/bank/institutions`);
+    }
     const res = await fetch(`${baseUrl}/api/bank/institutions?country=${encodeURIComponent(country)}`);
     if (!res.ok) {
       throw new Error(`Failed to load banks (${res.status})`);
@@ -44,6 +46,10 @@ export const bankService = {
   }> {
     const baseUrl = getApiBaseUrl();
     const redirectUrl = `${baseUrl}/api/bank/callback`;
+
+    if (__DEV__) {
+      console.log(`[BankService] Initiating bank connection to: ${baseUrl}/api/bank/connect (institution: ${institutionId})`);
+    }
 
     // 1. Initiate Requisition / Session on Backend
     const connectRes = await fetch(`${baseUrl}/api/bank/connect`, {
@@ -152,6 +158,9 @@ export const bankService = {
     }
 
     const baseUrl = getApiBaseUrl();
+    if (__DEV__) {
+      console.log(`[BankService] Syncing transactions from: ${baseUrl}/api/bank/sync`);
+    }
     let totalInserted = 0;
     let totalUpdated = 0;
     let totalSkipped = 0;
@@ -247,6 +256,9 @@ export const bankService = {
     }
 
     const baseUrl = getApiBaseUrl();
+    if (__DEV__) {
+      console.log(`[BankService] Disconnecting session at: ${baseUrl}/api/bank/disconnect`);
+    }
     try {
       await fetch(`${baseUrl}/api/bank/disconnect`, {
         method: 'POST',
