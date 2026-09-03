@@ -7,23 +7,16 @@
       "ES2022",
       "DOM"
     ],
-    "jsx": "react-jsx",
+    "types": [
+      "node"
+    ],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "outDir": "./dist"
+    "noEmit": false
   },
   "include": [
-    "nativewind-env.d.ts",
-    "app/**/*",
-    "src/**/*",
-    "shared/**/*",
-    "api/**/*",
-    "tests/**/*",
-    ".expo/types/**/*.ts",
-    "expo-env.d.ts"
-  ],
-  "extends": "expo/tsconfig.base"
+    "**/*.ts"
+  ]
 }

@@ -33,7 +33,7 @@ export async function parseJsonBody<T = any>(req: IncomingMessage): Promise<T> {
 
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', (chunk) => {
+    req.on('data', (chunk: any) => {
       body += chunk;
       if (body.length > 1024 * 1024) {
         reject(new Error('Payload too large'));

@@ -7,7 +7,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project api/tsconfig.json --noEmit",
+    "typecheck:api": "tsc --project api/tsconfig.json --noEmit",
     "generate:screenshots": "tsx scripts/generate-screenshots.ts",
     "generate:store-assets": "tsx scripts/generate-store-assets.ts"
   },

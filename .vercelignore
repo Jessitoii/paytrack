@@ -1,0 +1,33 @@
+# Vercel Deployment Ignore Rules
+# PayTrack Vercel deployment only serves Serverless API (/api) & Legal Endpoints.
+# The Expo/React Native mobile client runs on-device and is not deployed to Vercel.
+
+# Mobile Application & Frontend UI
+app/
+src/
+
+# Test Suites & Fixtures
+tests/
+dev.db*
+test.db*
+*.sqlite*
+
+# Documentation, Store Screenshots & Marketing Assets
+docs/
+assets/
+
+# Build Scripts & Asset Generators
+scripts/
+tools/
+
+# Native Mobile Directories & Build Artifacts
+android/
+ios/
+.expo/
+dist/
+web-build/
+
+# Environment Files
+.env
+.env.*
+!.env.example
