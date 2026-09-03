@@ -79,7 +79,8 @@ export const bankService = {
     // Generate dynamic Expo Linking redirect URL (supports both Expo Go and standalone apps)
     const appRedirectUrl = Linking.createURL('bank-callback');
 
-    console.log(`[BankService] Initiating bank connection: POST ${baseUrl}/api/bank/connect (institution: ${institutionId}, appRedirect: ${appRedirectUrl})`);
+    console.log(`[Mobile Diagnostic] 1. Redirect URI generated: scheme=${appRedirectUrl.split('://')[0]}, raw=${appRedirectUrl}`);
+    console.log(`[BankService] Initiating bank connection: POST ${baseUrl}/api/bank/connect (institution: ${institutionId})`);
 
     // 1. Initiate Requisition / Session on Backend
     const connectRes = await fetch(`${baseUrl}/api/bank/connect`, {
@@ -103,6 +104,8 @@ export const bankService = {
     const link = connectData.link;
     const authState = connectData.state;
 
+    console.log(`[Mobile Diagnostic] 2. Connect response: authFlowIdExists=${Boolean(connectData.authFlowId)}, stateExists=${Boolean(connectData.state)}, linkCreated=${Boolean(link)}`);
+
     if (!link) {
       throw new Error('Bank authorization link was not returned by server.');
     }
@@ -116,14 +119,14 @@ export const bankService = {
       console.log('[BankService] Opening Auth Session');
     }
 
-    // 2. Open In-App Browser for User Consent
     // 2. Open In-App Browser for User Consent with multi-channel deep-link listener
     let callbackSessionId: string | undefined;
     let callbackAuthToken: string | undefined;
     let authCode: string | undefined;
     let returnState: string | undefined;
+    let callbackSource: 'webbrowser' | 'linking' | 'initialURL' | 'state_fallback' = 'state_fallback';
 
-    const parseUrlParams = (urlStr: string) => {
+    const parseUrlParams = (urlStr: string, source: 'webbrowser' | 'linking' | 'initialURL') => {
       try {
         const parsedReturn = new URL(urlStr);
         const sid =
@@ -135,34 +138,42 @@ export const bankService = {
         const code = parsedReturn.searchParams.get('code');
         const st = parsedReturn.searchParams.get('state');
 
-        if (sid && !callbackSessionId) callbackSessionId = sid;
+        console.log(`[Mobile Diagnostic] Captured params from ${source}: params=[${Array.from(parsedReturn.searchParams.keys()).join(', ')}], hasSessionId=${Boolean(sid)}, hasAuthToken=${Boolean(token)}, hasCode=${Boolean(code)}, hasState=${Boolean(st)}`);
+
+        if (sid && !callbackSessionId) {
+          callbackSessionId = sid;
+          callbackSource = source;
+        }
         if (token && !callbackAuthToken) callbackAuthToken = token;
         if (code && !authCode) authCode = code;
         if (st && !returnState) returnState = st;
-      } catch (_) {}
+      } catch (err: any) {
+        console.warn(`[Mobile Diagnostic] Failed to parse URL from ${source}:`, err?.message);
+      }
     };
 
     // Listen on Linking events directly to capture deep link even if Android dismisses Custom Tabs
     const linkingSub = Linking.addEventListener('url', (event) => {
       if (event?.url) {
-        console.log('[BankService] Captured deep link via Linking event');
-        parseUrlParams(event.url);
+        console.log('[Mobile Diagnostic] 3. Linking event received');
+        parseUrlParams(event.url, 'linking');
       }
     });
 
     try {
       // Use appRedirectUrl so Custom Tabs automatically returns to PayTrack upon callback
       const result = await WebBrowser.openAuthSessionAsync(link, appRedirectUrl);
-      console.log(`[BankService] WebBrowser session finished: type=${result.type}`);
+      console.log(`[Mobile Diagnostic] 4. WebBrowser result: type=${result.type}, hasUrl=${Boolean((result as any).url)}`);
       if (result.type === 'success' && result.url) {
-        parseUrlParams(result.url);
+        parseUrlParams(result.url, 'webbrowser');
       }
 
       // If Custom Tabs dismissed or user switched apps, check initial URL or wait briefly for Android intent
       if (!callbackSessionId) {
         try {
           const initialUrl = await Linking.getInitialURL();
-          if (initialUrl) parseUrlParams(initialUrl);
+          console.log(`[Mobile Diagnostic] 5. Linking.getInitialURL(): exists=${Boolean(initialUrl)}`);
+          if (initialUrl) parseUrlParams(initialUrl, 'initialURL');
         } catch (_) {}
       }
 
@@ -178,6 +189,8 @@ export const bankService = {
     } finally {
       linkingSub.remove();
     }
+
+    console.log(`[Mobile Diagnostic] 6. Final callback source resolved: ${callbackSource}, hasSessionId=${Boolean(callbackSessionId)}, hasAuthToken=${Boolean(callbackAuthToken)}`);
 
     // 3. Fetch Accounts from Backend for this Session
     const queryParams = new URLSearchParams();
@@ -195,6 +208,8 @@ export const bankService = {
       queryParams.set('state', stateToPass);
     }
 
+    console.log(`[Mobile Diagnostic] 7. Querying /api/bank/accounts: hasSessionId=${Boolean(queryParams.has('sessionId'))}, hasAuthToken=${Boolean(queryParams.has('authToken'))}, hasCode=${Boolean(queryParams.has('code'))}, hasState=${Boolean(queryParams.has('state'))}`);
+
     let accountsRes: Response | null = null;
     let accountsData: any = null;
     const maxRetries = 3;
@@ -206,6 +221,8 @@ export const bankService = {
       accountsRes = await fetch(accountsUrl, {
         headers: { Accept: 'application/json' },
       });
+
+      console.log(`[Mobile Diagnostic] 8. /api/bank/accounts response: attempt=${attempt + 1}, status=${accountsRes.status}`);
 
       // Handle BANK_AUTH_RESULT_NOT_READY (202): wait and retry
       if (accountsRes.status === 202) {

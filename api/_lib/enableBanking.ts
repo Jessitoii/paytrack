@@ -408,6 +408,7 @@ export async function exchangeCodeForSession(code: string, state?: string): Prom
         .filter(Boolean);
 
       console.log(`[EnableBanking Sessions] Exchanged code for session: id=${redactId(data.session_id)}, accountsCount=${accountIds.length}`);
+      console.log(`[POST /sessions Diagnostic] Success: status=${data.status || 'AUTHORIZED'}, accountsCount=${accountIds.length}, hasAccountUid=${Boolean(accountIds[0])}, hasIdentificationHash=${Boolean(rawAccounts[0]?.identification_hash || rawAccounts[0]?.identification_hashes)}`);
 
       const sessionDetails: BankSessionDetails = {
         id: data.session_id,
@@ -426,6 +427,8 @@ export async function exchangeCodeForSession(code: string, state?: string): Prom
         err?.message?.includes('already authorized') ||
         err?.message?.includes('ALREADY_AUTHORIZED') ||
         err?.status === 422;
+
+      console.warn(`[POST /sessions Diagnostic] Failure: is422=${isAlreadyAuthorized}, message=${err?.message}`);
 
       if (isAlreadyAuthorized) {
         // Attempt recovery from cache

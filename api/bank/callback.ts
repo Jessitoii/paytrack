@@ -23,6 +23,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   let status = error ? 'error' : 'success';
   let appRedirectUrl = 'paytrack://bank-callback';
 
+  console.log(`[Callback Diagnostic] Reached: codeExists=${Boolean(code)}, stateExists=${Boolean(state)}, initialStatus=${status}, errorExists=${Boolean(error || errorDescription)}`);
+
   if (state) {
     try {
       const decoded = JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
@@ -31,6 +33,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       }
     } catch (_) {}
   }
+
+  console.log(`[Callback Diagnostic] appRedirectUrlScheme=${appRedirectUrl.split('://')[0]}, hasCustomUrl=${appRedirectUrl !== 'paytrack://bank-callback'}`);
 
   // 1. Check if session was already cached by state or code (idempotent callback handling)
   if (!sessionId) {
@@ -67,9 +71,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       );
     } else {
       try {
+        console.log('[Callback Diagnostic] Initiating POST /sessions exchange...');
         const session = await exchangeCodeForSession(code, state);
         sessionId = session.id;
+        console.log(`[Callback Diagnostic] POST /sessions succeeded: hasSessionId=${Boolean(sessionId)}`);
       } catch (err: any) {
+        console.warn(`[Callback Diagnostic] POST /sessions error: message=${err?.message}, code=${err?.code}`);
         if (err?.code === 'BANK_AUTH_SESSION_ALREADY_AUTHORIZED') {
           console.warn('[EnableBanking Callback] Session already authorized. Attempting cache recovery...');
           const cached = (code ? getCachedSession(code) : null) || (state ? getCachedSession(state) : null);
@@ -90,6 +97,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   // Generate stateless signed authorization token for cross-instance verification
   const authToken = sessionId ? createSignedSessionToken(sessionId, state) : '';
+
+  console.log(`[Callback Diagnostic] Redirect deep link created: scheme=${appRedirectUrl.split('://')[0]}, hasSessionId=${Boolean(sessionId)}, hasAuthToken=${Boolean(authToken)}, status=${status}`);
 
   const querySep = appRedirectUrl.includes('?') ? '&' : '?';
   const queryParts = [

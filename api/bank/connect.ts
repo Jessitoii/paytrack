@@ -31,13 +31,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const { redirectUri } = getEnableBankingCredentials();
     const redirectUrl = body.redirectUrl || redirectUri || `https://${req.headers.host}/api/bank/callback`;
 
-    console.log(`[EnableBanking Connect] Initiating auth flow: aspsp=${aspspName}, redirectUrl=${redirectUrl}`);
+    console.log(`[EnableBanking Connect Diagnostic] aspsp=${aspspName}, redirectUrlHost=${new URL(redirectUrl).host}, appRedirectUrl=${body.appRedirectUrl ? 'provided' : 'default'}`);
 
     const result = isMockMode()
       ? mockStartAuthorization(aspspName, redirectUrl, state)
       : await startAuthorization(aspspName, redirectUrl, state);
 
-    console.log(`[EnableBanking Connect] Auth flow initialized successfully: authFlowId=${result.authFlowId || 'none'}`);
+    console.log(`[EnableBanking Connect Diagnostic] authFlowIdExists=${Boolean(result.authFlowId)}, stateExists=${Boolean(state)}, linkCreated=${Boolean(result.url)}`);
 
     sendJson(res, 200, {
       authFlowId: result.authFlowId || null,

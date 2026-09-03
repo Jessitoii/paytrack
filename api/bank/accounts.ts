@@ -39,12 +39,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     if (!effectiveSessionId && !code && !state) {
+      console.warn('[Accounts Diagnostic] Missing all identifiers: returning 400 BANK_PARAM_MISSING');
       sendJson(res, 400, {
         error: 'Missing sessionId, authToken, code, or state parameter.',
         code: 'BANK_PARAM_MISSING',
       });
       return;
     }
+
+    console.log(`[Accounts Diagnostic] Request: hasSessionId=${Boolean(sessionId)}, hasAuthToken=${Boolean(authToken)}, hasEffectiveSessionId=${Boolean(effectiveSessionId)}, hasCode=${Boolean(code)}, hasState=${Boolean(state)}`);
 
     const mock = isMockMode();
 
@@ -92,7 +95,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!sessionData) {
       // Do NOT convert a cache miss into 404 BANK_REAUTH_REQUIRED!
       // Return 202 BANK_AUTH_RESULT_NOT_READY so mobile can retry or await deep link.
-      console.warn('[EnableBanking Accounts] Session data not ready for requested state');
+      console.warn('[Accounts Diagnostic] Session data not ready (cache miss or pending callback). Returning HTTP 202 BANK_AUTH_RESULT_NOT_READY');
       sendJson(res, 202, {
         error: 'Bank authorization is still being finalized. Please retry.',
         code: 'BANK_AUTH_RESULT_NOT_READY',
@@ -103,7 +106,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     const rawAccountsList: any[] = sessionData?.rawAccounts || sessionData?.accounts || [];
-    console.log(`[EnableBanking Accounts] Discovered ${rawAccountsList.length} account(s) for session`);
+    console.log(`[Accounts Diagnostic] Accounts resolved successfully: count=${rawAccountsList.length}, hasResolvedSessionId=${Boolean(resolvedSessionId)}`);
 
     const accountsWithDetails = await Promise.all(
       rawAccountsList.map(async (accItem: any) => {
