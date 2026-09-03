@@ -242,6 +242,53 @@ const sessionCache = new Map<string, CachedSession>();
 // In-flight request deduplication map to prevent concurrent duplicate POST /sessions calls
 const inFlightExchanges = new Map<string, Promise<BankSessionDetails>>();
 
+/**
+ * Redacts sensitive identifiers in logs to protect user privacy and credentials.
+ */
+export function redactId(id?: string | null): string {
+  if (!id) return '';
+  if (id.length <= 8) return '***';
+  return `${id.slice(0, 8)}...`;
+}
+
+/**
+ * Creates a short-lived cryptographic authorization token signing the resolved sessionId and state.
+ * Allows stateless verification across independent serverless function instances without shared memory.
+ */
+export function createSignedSessionToken(sessionId: string, state?: string): string {
+  const secret = process.env.ENABLE_BANKING_PRIVATE_KEY || process.env.ENABLE_BANKING_APPLICATION_ID || 'paytrack_bank_token_secret';
+  const timestamp = Date.now();
+  const payload = JSON.stringify({ sessionId, state: state || '', timestamp });
+  const hmac = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  return Buffer.from(JSON.stringify({ payload, sig: hmac })).toString('base64url');
+}
+
+/**
+ * Validates a signed session token. Returns the payload if valid and within 15-minute TTL.
+ */
+export function verifySignedSessionToken(token: string): { sessionId: string; state?: string } | null {
+  try {
+    const wrapper = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    if (!wrapper?.payload || !wrapper?.sig) return null;
+    const secret = process.env.ENABLE_BANKING_PRIVATE_KEY || process.env.ENABLE_BANKING_APPLICATION_ID || 'paytrack_bank_token_secret';
+    const expectedSig = crypto.createHmac('sha256', secret).update(wrapper.payload).digest('base64url');
+    if (expectedSig !== wrapper.sig) {
+      console.warn('[EnableBanking AuthToken] Invalid signature on session token');
+      return null;
+    }
+    const data = JSON.parse(wrapper.payload);
+    // 15-minute validity window
+    if (Date.now() - Number(data.timestamp) > 15 * 60 * 1000) {
+      console.warn('[EnableBanking AuthToken] Session token expired');
+      return null;
+    }
+    return { sessionId: data.sessionId, state: data.state };
+  } catch (err: any) {
+    console.warn('[EnableBanking AuthToken] Failed to parse session token:', err?.message);
+    return null;
+  }
+}
+
 export function setCachedSession(
   session: BankSessionDetails,
   state?: string,
@@ -333,7 +380,7 @@ export async function exchangeCodeForSession(code: string, state?: string): Prom
   // 1. Check if session was already exchanged and cached for this code or state
   const cached = getCachedSession(code) || (state ? getCachedSession(state) : null);
   if (cached) {
-    console.log(`[EnableBanking Sessions] Reusing cached session for code/state: id=${cached.id}`);
+    console.log(`[EnableBanking Sessions] Reusing cached session for code/state: id=${redactId(cached.id)}`);
     return cached;
   }
 
@@ -360,7 +407,7 @@ export async function exchangeCodeForSession(code: string, state?: string): Prom
         })
         .filter(Boolean);
 
-      console.log(`[EnableBanking Sessions] Exchanged code for session: accountsCount=${accountIds.length}`);
+      console.log(`[EnableBanking Sessions] Exchanged code for session: id=${redactId(data.session_id)}, accountsCount=${accountIds.length}`);
 
       const sessionDetails: BankSessionDetails = {
         id: data.session_id,
@@ -384,7 +431,7 @@ export async function exchangeCodeForSession(code: string, state?: string): Prom
         // Attempt recovery from cache
         const recovered = getCachedSession(code) || (state ? getCachedSession(state) : null);
         if (recovered) {
-          console.log(`[EnableBanking Sessions] 422 Session already authorized: recovered from cache id=${recovered.id}`);
+          console.log(`[EnableBanking Sessions] 422 Session already authorized: recovered from cache id=${redactId(recovered.id)}`);
           return recovered;
         }
 
@@ -411,7 +458,7 @@ export async function getSession(sessionId: string): Promise<BankSessionDetails>
   // Check in-memory cache first
   const cached = getCachedSession(sessionId);
   if (cached) {
-    console.log(`[EnableBanking Sessions] Found cached session: status=${cached.status}, accountsCount=${cached.accounts.length}`);
+    console.log(`[EnableBanking Sessions] Found cached session: id=${redactId(cached.id)}, status=${cached.status}, accountsCount=${cached.accounts.length}`);
     return cached;
   }
 

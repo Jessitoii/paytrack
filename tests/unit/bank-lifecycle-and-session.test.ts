@@ -8,6 +8,11 @@ import callbackHandler from '../../api/bank/callback';
 import accountsHandler from '../../api/bank/accounts';
 import syncHandler from '../../api/bank/sync';
 import disconnectHandler from '../../api/bank/disconnect';
+import {
+  deleteCachedSession,
+  createSignedSessionToken,
+  verifySignedSessionToken,
+} from '../../api/_lib/enableBanking';
 
 function createMockReqRes(options: {
   method?: string;
@@ -190,6 +195,72 @@ describe('Complete Enable Banking Lifecycle & Session Robustness Suite', () => {
     expect(data.sessionId).toBe('session_code_interrupted_fallback_888');
     expect(data.accounts.length).toBeGreaterThan(0);
     expect(data.accounts[0].id).toBe('NL91INGB0001234567');
+  });
+
+  // 5d. Stateless cross-instance recovery: instance B receives sessionId without sharing instance A memory
+  it('5d. Stateless cross-instance recovery: instance B receives sessionId and succeeds even when in-memory cache is empty', async () => {
+    const statelessSessionId = 'session_stateless_cross_instance_123';
+    // Explicitly wipe in-memory cache to simulate separate, freshly-spawned Vercel container
+    deleteCachedSession(statelessSessionId);
+
+    const accReq = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/accounts?sessionId=${statelessSessionId}`,
+    });
+    await accountsHandler(accReq.req, accReq.res);
+
+    expect(accReq.res.statusCode).toBe(200);
+    const data = accReq.res._getData();
+    expect(data.sessionId).toBe(statelessSessionId);
+    expect(data.accounts.length).toBeGreaterThan(0);
+    expect(data.accounts[0].id).toBe('NL91INGB0001234567');
+  });
+
+  // 5e. Uncached state lookup returns HTTP 202 BANK_AUTH_RESULT_NOT_READY (not 404 BANK_REAUTH_REQUIRED)
+  it('5e. Cache miss on state lookup returns HTTP 202 BANK_AUTH_RESULT_NOT_READY without failing connection', async () => {
+    const nonExistentState = 'state_completely_unseen_in_this_container_999';
+
+    const accReq = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/accounts?state=${nonExistentState}`,
+    });
+    await accountsHandler(accReq.req, accReq.res);
+
+    // Must NOT return 404 BANK_REAUTH_REQUIRED
+    expect(accReq.res.statusCode).toBe(202);
+    const data = accReq.res._getData();
+    expect(data.code).toBe('BANK_AUTH_RESULT_NOT_READY');
+    expect(data.reauthRequired).toBe(false);
+  });
+
+  // 5f. Stateless signed authToken verification recovers session on independent instance
+  it('5f. Stateless signed authToken verification recovers session on an independent serverless instance', async () => {
+    const freshSessionId = 'session_signed_token_test_777';
+    const freshState = 'state_signed_token_test_555';
+    // Wipe cache to guarantee zero in-memory assistance
+    deleteCachedSession(freshSessionId);
+    deleteCachedSession(freshState);
+
+    // Generate cryptographic token (simulating callback on instance A)
+    const token = createSignedSessionToken(freshSessionId, freshState);
+    expect(token).toBeDefined();
+
+    // Verify token validity directly
+    const verified = verifySignedSessionToken(token);
+    expect(verified?.sessionId).toBe(freshSessionId);
+    expect(verified?.state).toBe(freshState);
+
+    // Instance B receives only the authToken (without memory of instance A)
+    const accReq = createMockReqRes({
+      method: 'GET',
+      url: `/api/bank/accounts?authToken=${token}`,
+    });
+    await accountsHandler(accReq.req, accReq.res);
+
+    expect(accReq.res.statusCode).toBe(200);
+    const data = accReq.res._getData();
+    expect(data.sessionId).toBe(freshSessionId);
+    expect(data.accounts.length).toBeGreaterThan(0);
   });
 
   // 6. Reauthorization with a new session correctly replaces the old session/account mapping

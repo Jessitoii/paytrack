@@ -1,7 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import { handleCors, sendHtml } from '../_lib/cors';
-import { exchangeCodeForSession, getCachedSession, setCachedSession, isMockMode } from '../_lib/enableBanking';
+import {
+  exchangeCodeForSession,
+  getCachedSession,
+  setCachedSession,
+  createSignedSessionToken,
+  redactId,
+  isMockMode,
+} from '../_lib/enableBanking';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (handleCors(req, res)) return;
@@ -30,7 +37,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const cached = (code ? getCachedSession(code) : null) || (state ? getCachedSession(state) : null);
     if (cached) {
       sessionId = cached.id;
-      console.log(`[EnableBanking Callback] Reusing existing cached session: id=${sessionId}`);
+      console.log(`[EnableBanking Callback] Reusing existing cached session: id=${redactId(sessionId)}`);
     }
   }
 
@@ -81,10 +88,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
   }
 
+  // Generate stateless signed authorization token for cross-instance verification
+  const authToken = sessionId ? createSignedSessionToken(sessionId, state) : '';
+
   const querySep = appRedirectUrl.includes('?') ? '&' : '?';
   const queryParts = [
     sessionId ? `session_id=${encodeURIComponent(sessionId)}` : '',
     sessionId ? `ref=${encodeURIComponent(sessionId)}` : '',
+    authToken ? `auth_token=${encodeURIComponent(authToken)}` : '',
     !sessionId && code ? `code=${encodeURIComponent(code)}` : '',
     state ? `state=${encodeURIComponent(state)}` : '',
     `status=${encodeURIComponent(status)}`,

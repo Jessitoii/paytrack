@@ -7,6 +7,8 @@ import {
   getCachedSession,
   getAccountDetails,
   getAccountBalances,
+  verifySignedSessionToken,
+  redactId,
   isMockMode,
 } from '../_lib/enableBanking';
 import {
@@ -22,12 +24,23 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const parsedUrl = new URL(req.url || '/', 'http://localhost');
     const sessionId = parsedUrl.searchParams.get('sessionId') || parsedUrl.searchParams.get('requisitionId');
+    const authToken = parsedUrl.searchParams.get('authToken') || parsedUrl.searchParams.get('auth_token');
     const code = parsedUrl.searchParams.get('code');
     const state = parsedUrl.searchParams.get('state');
 
-    if (!sessionId && !code && !state) {
+    // Stateless signed token recovery: extracts verified sessionId across independent serverless instances
+    let effectiveSessionId = sessionId;
+    if (!effectiveSessionId && authToken) {
+      const verified = verifySignedSessionToken(authToken);
+      if (verified?.sessionId) {
+        effectiveSessionId = verified.sessionId;
+        console.log(`[EnableBanking Accounts] Recovered session ID from signed authToken: id=${redactId(effectiveSessionId)}`);
+      }
+    }
+
+    if (!effectiveSessionId && !code && !state) {
       sendJson(res, 400, {
-        error: 'Missing sessionId, code, or state parameter.',
+        error: 'Missing sessionId, authToken, code, or state parameter.',
         code: 'BANK_PARAM_MISSING',
       });
       return;
@@ -35,32 +48,32 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const mock = isMockMode();
 
-    let resolvedSessionId = sessionId;
+    let resolvedSessionId = effectiveSessionId;
     let sessionData: any = null;
 
     if (mock) {
       sessionData =
-        (sessionId ? getCachedSession(sessionId) : null) ||
+        (effectiveSessionId ? getCachedSession(effectiveSessionId) : null) ||
         (state ? getCachedSession(state) : null) ||
         (code ? getCachedSession(code) : null) ||
-        mockGetSession(sessionId || 'session_mock');
-      resolvedSessionId = sessionData.id;
+        (effectiveSessionId || code ? mockGetSession(effectiveSessionId || 'session_mock') : null);
+      resolvedSessionId = sessionData?.id;
     } else {
-      // 1. If sessionId is provided, fetch existing authorized session directly (do not call POST /sessions!)
-      if (sessionId) {
-        console.log(`[EnableBanking Accounts] Fetching session details for sessionId...`);
-        sessionData = await getSession(sessionId);
+      // 1. If effectiveSessionId is provided, fetch existing authorized session directly from Enable Banking
+      if (effectiveSessionId) {
+        console.log(`[EnableBanking Accounts] Fetching session details for sessionId: id=${redactId(effectiveSessionId)}`);
+        sessionData = await getSession(effectiveSessionId);
       }
       // 2. If no sessionId, but state is provided, check if session is cached under state
       else if (state && getCachedSession(state)) {
-        console.log(`[EnableBanking Accounts] Found session in cache for state...`);
+        console.log(`[EnableBanking Accounts] Found session in cache for state`);
         sessionData = getCachedSession(state);
       }
       // 3. If code is provided, check cache first to avoid duplicate exchange errors
       else if (code) {
         const cached = getCachedSession(code) || (state ? getCachedSession(state) : null);
         if (cached) {
-          console.log(`[EnableBanking Accounts] Found session in cache for code/state...`);
+          console.log(`[EnableBanking Accounts] Found session in cache for code/state: id=${redactId(cached.id)}`);
           sessionData = cached;
         } else {
           console.log('[EnableBanking Accounts] Exchanging code for session...');
@@ -73,14 +86,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         sessionData = getCachedSession(state);
       }
 
-      resolvedSessionId = sessionData?.id || sessionData?.session_id || sessionId;
+      resolvedSessionId = sessionData?.id || sessionData?.session_id || effectiveSessionId;
     }
 
     if (!sessionData) {
-      sendJson(res, 404, {
-        error: 'Bank session not found or expired. Reauthorization required.',
-        code: 'BANK_REAUTH_REQUIRED',
-        reauthRequired: true,
+      // Do NOT convert a cache miss into 404 BANK_REAUTH_REQUIRED!
+      // Return 202 BANK_AUTH_RESULT_NOT_READY so mobile can retry or await deep link.
+      console.warn('[EnableBanking Accounts] Session data not ready for requested state');
+      sendJson(res, 202, {
+        error: 'Bank authorization is still being finalized. Please retry.',
+        code: 'BANK_AUTH_RESULT_NOT_READY',
+        reauthRequired: false,
+        message: 'Bank authorization is still being finalized. Please retry.',
       });
       return;
     }

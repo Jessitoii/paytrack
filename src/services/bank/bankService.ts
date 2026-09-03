@@ -117,27 +117,66 @@ export const bankService = {
     }
 
     // 2. Open In-App Browser for User Consent
+    // 2. Open In-App Browser for User Consent with multi-channel deep-link listener
     let callbackSessionId: string | undefined;
+    let callbackAuthToken: string | undefined;
     let authCode: string | undefined;
     let returnState: string | undefined;
+
+    const parseUrlParams = (urlStr: string) => {
+      try {
+        const parsedReturn = new URL(urlStr);
+        const sid =
+          parsedReturn.searchParams.get('session_id') ||
+          parsedReturn.searchParams.get('ref');
+        const token =
+          parsedReturn.searchParams.get('auth_token') ||
+          parsedReturn.searchParams.get('authToken');
+        const code = parsedReturn.searchParams.get('code');
+        const st = parsedReturn.searchParams.get('state');
+
+        if (sid && !callbackSessionId) callbackSessionId = sid;
+        if (token && !callbackAuthToken) callbackAuthToken = token;
+        if (code && !authCode) authCode = code;
+        if (st && !returnState) returnState = st;
+      } catch (_) {}
+    };
+
+    // Listen on Linking events directly to capture deep link even if Android dismisses Custom Tabs
+    const linkingSub = Linking.addEventListener('url', (event) => {
+      if (event?.url) {
+        console.log('[BankService] Captured deep link via Linking event');
+        parseUrlParams(event.url);
+      }
+    });
 
     try {
       // Use appRedirectUrl so Custom Tabs automatically returns to PayTrack upon callback
       const result = await WebBrowser.openAuthSessionAsync(link, appRedirectUrl);
       console.log(`[BankService] WebBrowser session finished: type=${result.type}`);
       if (result.type === 'success' && result.url) {
+        parseUrlParams(result.url);
+      }
+
+      // If Custom Tabs dismissed or user switched apps, check initial URL or wait briefly for Android intent
+      if (!callbackSessionId) {
         try {
-          const parsedReturn = new URL(result.url);
-          callbackSessionId =
-            parsedReturn.searchParams.get('session_id') ||
-            parsedReturn.searchParams.get('ref') ||
-            undefined;
-          authCode = parsedReturn.searchParams.get('code') || undefined;
-          returnState = parsedReturn.searchParams.get('state') || undefined;
+          const initialUrl = await Linking.getInitialURL();
+          if (initialUrl) parseUrlParams(initialUrl);
         } catch (_) {}
+      }
+
+      // Grace period for intent delivery on Android (up to 2 seconds)
+      if (!callbackSessionId) {
+        for (let i = 0; i < 5; i++) {
+          if (callbackSessionId) break;
+          await new Promise((r) => setTimeout(r, 400));
+        }
       }
     } catch (browserErr: any) {
       console.warn('[BankService] WebBrowser notice:', browserErr?.message);
+    } finally {
+      linkingSub.remove();
     }
 
     // 3. Fetch Accounts from Backend for this Session
@@ -148,42 +187,66 @@ export const bankService = {
     } else if (authCode) {
       queryParams.set('code', authCode);
     }
+    if (callbackAuthToken) {
+      queryParams.set('authToken', callbackAuthToken);
+    }
     const stateToPass = returnState || authState;
     if (stateToPass) {
       queryParams.set('state', stateToPass);
     }
 
-    const accountsUrl = `${baseUrl}/api/bank/accounts?${queryParams.toString()}`;
-    console.log(`[BankService] Fetching accounts: ${accountsUrl}`);
+    let accountsRes: Response | null = null;
+    let accountsData: any = null;
+    const maxRetries = 3;
 
-    const accountsRes = await fetch(accountsUrl, {
-      headers: { Accept: 'application/json' },
-    });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const accountsUrl = `${baseUrl}/api/bank/accounts?${queryParams.toString()}`;
+      console.log(`[BankService] Fetching accounts (attempt ${attempt + 1}): ${baseUrl}/api/bank/accounts`);
 
-    if (!accountsRes.ok) {
-      const errText = await accountsRes.text();
+      accountsRes = await fetch(accountsUrl, {
+        headers: { Accept: 'application/json' },
+      });
 
-      // Handle ALREADY_AUTHORIZED: recover existing active connection if present
-      if (accountsRes.status === 422 && errText.includes('BANK_AUTH_SESSION_ALREADY_AUTHORIZED')) {
-        const existingConn = await bankRepository.getActiveConnection();
-        if (existingConn) {
-          const existingAccounts = await bankRepository.listAccounts(existingConn.id);
-          if (existingAccounts.length > 0) {
-            console.log('[BankService] Reusing existing connection for already-authorized session');
-            try {
-              await this.syncTransactions(existingConn.id);
-            } catch (_) {}
-            dbEvents.emit('finance_changed');
-            return { connection: existingConn, accounts: existingAccounts };
-          }
+      // Handle BANK_AUTH_RESULT_NOT_READY (202): wait and retry
+      if (accountsRes.status === 202) {
+        if (attempt < maxRetries) {
+          console.log('[BankService] Bank authorization still finalizing on server, retrying in 2s...');
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
         }
       }
 
-      const msg = extractErrorMessage(errText, accountsRes.status, 'Unable to retrieve authorized bank accounts');
-      throw new Error(`[${accountsRes.status} from ${baseUrl}/api/bank/accounts] ${msg}`);
+      if (!accountsRes.ok) {
+        const errText = await accountsRes.text();
+
+        // Handle ALREADY_AUTHORIZED: recover existing active connection if present
+        if (accountsRes.status === 422 && errText.includes('BANK_AUTH_SESSION_ALREADY_AUTHORIZED')) {
+          const existingConn = await bankRepository.getActiveConnection();
+          if (existingConn) {
+            const existingAccounts = await bankRepository.listAccounts(existingConn.id);
+            if (existingAccounts.length > 0) {
+              console.log('[BankService] Reusing existing connection for already-authorized session');
+              try {
+                await this.syncTransactions(existingConn.id);
+              } catch (_) {}
+              dbEvents.emit('finance_changed');
+              return { connection: existingConn, accounts: existingAccounts };
+            }
+          }
+        }
+
+        const msg = extractErrorMessage(errText, accountsRes.status, 'Unable to retrieve authorized bank accounts');
+        throw new Error(`[${accountsRes.status} from ${baseUrl}/api/bank/accounts] ${msg}`);
+      }
+
+      accountsData = await accountsRes.json();
+      break;
     }
 
-    const accountsData = await accountsRes.json();
+    if (!accountsData) {
+      throw new Error('Bank authorization is still being finalized. If you finished authorizing in your browser, please tap "Open PayTrack" in the browser tab.');
+    }
+
     const rawAccounts = accountsData.accounts || [];
 
     if (rawAccounts.length === 0) {
